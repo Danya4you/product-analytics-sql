@@ -26,7 +26,7 @@ SELECT
     )                                            AS core_actions_cnt,
     count(DISTINCT e.event_name)                 AS distinct_events,
     count(*) FILTER (WHERE e.platform = 'mobile') AS mobile_events
-FROM app.events e
+FROM marts.stg_events e
 WHERE e.event_name NOT IN ('signup','email_confirmed')   -- регистрационные, не активность
 GROUP BY e.user_id, e.occurred_at::date;
 

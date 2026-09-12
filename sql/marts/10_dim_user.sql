@@ -28,7 +28,7 @@ WITH first_week AS (
         count(*)           FILTER (WHERE e.event_name = 'invite_sent')           AS invites_first_7d,
         count(*)           FILTER (WHERE e.event_name = 'integration_connected') AS integrations_first_7d
     FROM app.users u
-    LEFT JOIN app.events e
+    LEFT JOIN marts.stg_events e
            ON e.user_id = u.user_id
           AND e.occurred_at < u.signed_up_at + interval '7 days'
     GROUP BY u.user_id
@@ -44,7 +44,7 @@ first_paid AS (
 ),
 last_seen AS (
     SELECT user_id, max(occurred_at) AS last_event_at, count(*) AS events_lifetime
-    FROM app.events
+    FROM marts.stg_events
     GROUP BY user_id
 )
 SELECT
@@ -92,7 +92,12 @@ FROM app.users      u
 JOIN app.channels   c  USING (channel_id)
 JOIN first_week     fw USING (user_id)
 LEFT JOIN first_paid fp USING (user_id)
-LEFT JOIN last_seen  ls USING (user_id);
+LEFT JOIN last_seen  ls USING (user_id)
+-- Служебные аккаунты сотрудников в продуктовую аналитику не попадают: они
+-- заходят в продукт и никогда не платят, то есть тянут конверсию вниз, ничего
+-- не говоря о клиентах. Фильтр стоит здесь, в единственной точке входа в
+-- пользовательский слой, а не в каждом отчёте по отдельности.
+WHERE c.channel_code <> 'internal';
 
 CREATE UNIQUE INDEX dim_user_pk           ON marts.dim_user (user_id);
 CREATE INDEX        dim_user_cohort_idx   ON marts.dim_user (cohort_month);

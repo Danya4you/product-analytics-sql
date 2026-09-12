@@ -106,7 +106,7 @@ WITH live_users AS (
 -- в квадратичный: 400 тысяч строк умножаются на поиск по каждой из них.
 per_user AS (
     SELECT e.user_id, e.event_name, count(*) AS cnt
-    FROM app.events e
+    FROM marts.stg_events e
     JOIN live_users l USING (user_id)
     WHERE e.occurred_at > marts.snapshot_ts() - interval '90 days'
       AND e.event_name NOT IN ('signup','email_confirmed','onboarding_completed')

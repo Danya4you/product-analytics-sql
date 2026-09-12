@@ -17,8 +17,8 @@ signups → trial → payment → subscription life → churn
 channels activation plans         MRR         prediction
 ```
 
-**11,999** signups · **405,000** events · **20 months** · **9** analysis blocks ·
-**14** automated data quality checks
+**11,999** customer signups · **432,000** events after cleaning · **20 months** ·
+**10** analysis blocks · **18** automated data quality checks
 
 ---
 
@@ -26,6 +26,7 @@ channels activation plans         MRR         prediction
 
 | | Question | Query |
 |---|---|---|
+| 0 | What is wrong with the dump: duplicates, staff accounts, late events | [00_data_hygiene.sql](sql/analysis/00_data_hygiene.sql) |
 | 1 | Where users are lost and what activation is worth | [01_funnel_activation.sql](sql/analysis/01_funnel_activation.sql) |
 | 2 | User retention and net revenue retention | [02_cohort_retention.sql](sql/analysis/02_cohort_retention.sql) |
 | 3 | MRR waterfall: new / expansion / contraction / churn | [03_mrr_movements.sql](sql/analysis/03_mrr_movements.sql) |
@@ -81,7 +82,7 @@ cd product-analytics-sql
 
 export PGUSER=postgres PGPASSWORD=postgres
 ./scripts/build.sh          # generate, load, build marts, run quality checks
-./scripts/run_analysis.sh   # all nine analysis blocks
+./scripts/run_analysis.sh   # all ten analysis blocks
 ```
 
 Windows, PowerShell:
@@ -100,7 +101,7 @@ PGHOST=localhost PGPORT=5433 PGUSER=postgres PGPASSWORD=postgres ./scripts/build
 ```
 
 A full build takes about two minutes: 12 seconds to generate, half a minute to
-load 400,000 events, the rest to build marts. For a quick pass:
+load 440,000 rows of raw event log, the rest to build marts. For a quick pass:
 `USERS=4000 ./scripts/build.sh`.
 
 The dashboard is rebuilt from the database by a script — its numbers are never
@@ -122,19 +123,21 @@ Nothing needs to be run to read the results: the complete query output is in
 sql/
   00_schema.sql          raw layer `app`: 9 tables, keys, CHECK constraints
   01_load.sql            CSV load via \copy
-  marts/                 dim_user, fct_subscription, fct_mrr_movement, …
-  analysis/              the nine analysis blocks
+  marts/                 stg_events, dim_user, fct_subscription, fct_mrr_movement, …
+  analysis/              the ten analysis blocks
 tests/
-  data_quality.sql       14 checks; exits non-zero on failure
+  data_quality.sql       18 checks; exits non-zero on failure
 etl/
   generate_data.py       data generator, zero dependencies
 docs/
   data-model.md          data model and three places that are easy to get wrong
   metrics.md             metric dictionary: formula, location, caveat
   findings.md            findings with numbers and recommendations
+  performance.md         query plan measurements: what was slow and why
 report/
   dashboard.html         dashboard in plain HTML and SVG, no libraries
   analysis_output.txt    complete query output
+  explain.txt            query plans produced by scripts/explain.sql
 ```
 
 Two layers. **`app`** holds the data as a production database and an event
@@ -148,6 +151,17 @@ prompt to ask why the field isn't in a mart yet.
 
 Working through these is half the value of the repository. Each one is
 documented at length in the code itself.
+
+**The raw log is dirty, and the cleaning lives in exactly one place.** Tracker
+retries duplicate 1.8% of rows, the dump contains staff accounts, and some events
+arrive a day or more late. All of it is handled in `marts.stg_events` rather than
+in each report — and quantified in block 00, so the cost of skipping the cleanup
+is measured rather than assumed.
+
+**A number carries not just a period but a computation date.** Because of
+ingestion lag, a cohort's activation rate computed the moment its window closes
+is lower than the final figure. That is why yesterday's report for last month and
+today's report for the same month disagree — and it is not a bug.
 
 **MRR movements are derived from the event log, not from differencing monthly
 snapshots.** A subscription that arrives and leaves inside one calendar month
@@ -186,7 +200,7 @@ approximation: `marts.norm_cdf()`, `marts.z_two_proportions()`,
 
 ## Data quality checks
 
-`tests/data_quality.sql` holds 14 checks for the things the database cannot
+`tests/data_quality.sql` holds 18 checks for the things the database cannot
 enforce on its own: consistency across tables, agreement with the snapshot date,
 and reconciliation between marts and the raw layer. The last one matters most —
 a mart that has silently drifted from its source is the worst kind of bug,
@@ -195,8 +209,12 @@ because the report built on it still looks plausible.
 The key check: the cumulative MRR waterfall must equal an independently computed
 monthly snapshot, to the kopek.
 
+One check watches the checks themselves: №15 requires duplicates to still be
+present in the raw log. Without them the deduplication would go untested and
+would break silently once duplicates returned.
+
 Checks run in CI on every push. GitHub Actions brings up PostgreSQL, builds the
-marts and executes all nine analysis blocks; a broken query fails the build.
+marts and executes all ten analysis blocks; a broken query fails the build.
 
 ---
 
@@ -208,9 +226,10 @@ The data is **synthetic**, generated by `etl/generate_data.py`. Which means:
   them validates the queries — it is not a discovery about a product.
 - The three-task activation threshold is set by the generator, so the
   "tasks → conversion" curve breaks as a step. On real data it would be smooth.
-- The data is clean: no duplicates, no typos in reference tables, no events
-  backfilled after the fact, no tracking logic changed halfway through. On a real
-  project that is half the work, and here that half is missing.
+- The data carries only the defects that were deliberately built in: duplicate
+  deliveries, staff accounts and ingestion lag. Real dumps also bring typos in
+  reference tables, tracking logic changed halfway through the period and events
+  backfilled months later. Cleaning is represented here, not exhausted.
 - Channel attribution is unambiguous — each user comes from exactly one source.
   Real life is never like that.
 

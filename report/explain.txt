@@ -1,0 +1,143 @@
+
+################################################################
+# 1. STABLE-функция в списке выборки
+################################################################
+
+Функция, которая честно считает max() по app.events, вычисляется на
+КАЖДОЙ строке результата. Ниже она берётся всего для 200 пользователей.
+Умножьте на 60, чтобы получить время построения dim_user на 12 000.
+
+--- наивная версия (полный проход по событиям на каждую строку) ---
+                                 QUERY PLAN                                 
+----------------------------------------------------------------------------
+ Subquery Scan on u (actual rows=200 loops=1)
+   ->  Limit (actual rows=200 loops=1)
+         ->  Index Scan using users_pkey on users (actual rows=200 loops=1)
+ Planning Time: 2.885 ms
+ Execution Time: 10462.331 ms
+(5 �����)
+
+
+--- версия из репозитория (чтение витрины marts.meta из одной строки) ---
+                                 QUERY PLAN                                 
+----------------------------------------------------------------------------
+ Subquery Scan on u (actual rows=200 loops=1)
+   ->  Limit (actual rows=200 loops=1)
+         ->  Index Scan using users_pkey on users (actual rows=200 loops=1)
+ Planning Time: 0.297 ms
+ Execution Time: 2.480 ms
+(5 �����)
+
+
+################################################################
+# 2. Коррелированный подзапрос против предварительной свёртки
+################################################################
+
+Задача: медиана числа событий каждого типа на аккаунт. Первый вариант
+на каждой строке лога спрашивает «а сколько таких у этого пользователя»,
+второй сначала сворачивает лог до «пользователь x событие».
+Окно сужено до 30 дней, иначе наивный вариант не дожидается.
+
+--- наивный: подзапрос на каждой строке ---
+                                                             QUERY PLAN                                                              
+-------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate (actual rows=12 loops=1)
+   Group Key: e.event_name
+   ->  Sort (actual rows=37936 loops=1)
+         Sort Key: e.event_name
+         Sort Method: quicksort  Memory: 3016kB
+         ->  Nested Loop (actual rows=37936 loops=1)
+               ->  Index Scan using stg_events_user_time_idx on stg_events e (actual rows=37936 loops=1)
+                     Index Cond: (occurred_at > (marts.snapshot_ts() - '30 days'::interval))
+               ->  Memoize (actual rows=1 loops=37936)
+                     Cache Key: e.user_id, e.event_name
+                     Cache Mode: binary
+                     Hits: 25522  Misses: 12414  Evictions: 0  Overflows: 0  Memory Usage: 1480kB
+                     ->  Aggregate (actual rows=1 loops=12414)
+                           ->  Index Scan using stg_events_user_time_idx on stg_events x (actual rows=3 loops=12414)
+                                 Index Cond: ((user_id = e.user_id) AND (occurred_at > (marts.snapshot_ts() - '30 days'::interval)))
+                                 Filter: (event_name = e.event_name)
+                                 Rows Removed by Filter: 16
+ Planning Time: 5.697 ms
+ Execution Time: 410.298 ms
+(19 �����)
+
+
+--- из репозитория: сначала свёртка, потом медиана ---
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ GroupAggregate (actual rows=12 loops=1)
+   Group Key: per_user.event_name
+   ->  Sort (actual rows=12414 loops=1)
+         Sort Key: per_user.event_name
+         Sort Method: quicksort  Memory: 867kB
+         ->  Subquery Scan on per_user (actual rows=12414 loops=1)
+               ->  HashAggregate (actual rows=12414 loops=1)
+                     Group Key: stg_events.user_id, stg_events.event_name
+                     Batches: 1  Memory Usage: 2065kB
+                     ->  Index Scan using stg_events_user_time_idx on stg_events (actual rows=37936 loops=1)
+                           Index Cond: (occurred_at > (marts.snapshot_ts() - '30 days'::interval))
+ Planning Time: 0.255 ms
+ Execution Time: 57.526 ms
+(13 �����)
+
+
+################################################################
+# 3. Когда индекс на (user_id, occurred_at) работает, а когда нет
+################################################################
+
+Индекс — не универсальное ускорение, а выбор планировщика. Ниже два
+запроса к одной таблице: в первом индекс используется, во втором
+планировщик от него отказывается, и правильно делает.
+
+--- 3a. Один пользователь: индексный доступ ---
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Index Scan using stg_events_user_time_idx on stg_events (actual rows=4 loops=1)
+         Index Cond: ((user_id = 4242) AND (occurred_at < '2026-01-01 00:00:00'::timestamp without time zone))
+ Planning Time: 0.128 ms
+ Execution Time: 0.066 ms
+(5 �����)
+
+
+--- 3b. Все пользователи разом: планировщик берёт последовательное чтение ---
+                                  QUERY PLAN                                  
+------------------------------------------------------------------------------
+ HashAggregate (actual rows=12039 loops=1)
+   Group Key: u.user_id
+   Batches: 1  Memory Usage: 1169kB
+   ->  Hash Right Join (actual rows=68730 loops=1)
+         Hash Cond: (e.user_id = u.user_id)
+         Join Filter: (e.occurred_at < (u.signed_up_at + '7 days'::interval))
+         Rows Removed by Join Filter: 363242
+         ->  Seq Scan on stg_events e (actual rows=431932 loops=1)
+         ->  Hash (actual rows=12039 loops=1)
+               Buckets: 16384  Batches: 1  Memory Usage: 693kB
+               ->  Seq Scan on users u (actual rows=12039 loops=1)
+ Planning Time: 0.482 ms
+ Execution Time: 268.992 ms
+(13 �����)
+
+
+--- 3c. Тот же запрос с принудительно запрещённым индексом ---
+    Если время почти не изменилось — значит индекс и не использовался.
+                                  QUERY PLAN                                  
+------------------------------------------------------------------------------
+ HashAggregate (actual rows=12039 loops=1)
+   Group Key: u.user_id
+   Batches: 1  Memory Usage: 1169kB
+   ->  Hash Right Join (actual rows=68730 loops=1)
+         Hash Cond: (e.user_id = u.user_id)
+         Join Filter: (e.occurred_at < (u.signed_up_at + '7 days'::interval))
+         Rows Removed by Join Filter: 363242
+         ->  Seq Scan on stg_events e (actual rows=431932 loops=1)
+         ->  Hash (actual rows=12039 loops=1)
+               Buckets: 16384  Batches: 1  Memory Usage: 693kB
+               ->  Seq Scan on users u (actual rows=12039 loops=1)
+ Planning Time: 0.190 ms
+ Execution Time: 235.075 ms
+(13 �����)
+
+
+Готово.

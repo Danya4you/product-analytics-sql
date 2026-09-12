@@ -58,6 +58,10 @@ CHANNELS = [
     (5, "referral",        "Реферальная программа","referral",  300.00, 0.10, 1.46),
     (6, "partner",         "Партнёрские интеграции","referral", 2600.00, 0.07, 1.28),
     (7, "email",           "Рассылка по базе",     "organic",   120.00, 0.06, 1.04),
+    # Внутренние аккаунты сотрудников. Доля трафика нулевая: они не приходят
+    # из маркетинга, их заводят вручную. В аналитике их надо исключать, и
+    # витрины это делают — см. sql/marts/02_stg_events.sql.
+    (8, "internal",        "Внутренние аккаунты",  "internal",   0.00, 0.00, 1.00),
 ]
 
 COUNTRIES = [("RU", 0.82), ("KZ", 0.07), ("BY", 0.06), ("UZ", 0.03), ("AM", 0.02)]
@@ -108,6 +112,18 @@ EXPERIMENTS = [
 
 rng = random.Random(SEED)
 
+# Отдельный поток случайных чисел для дефектов данных. Это не украшательство:
+# у random.Random одна последовательность на объект, и любой лишний вызов
+# сдвигает всё, что берётся после него. Если бы дубли и служебные аккаунты
+# тянули числа из общего rng, добавление грязи переписало бы весь набор данных
+# и все числа в docs/findings.md разом устарели бы. С отдельным потоком
+# основная генерация не замечает, что рядом кто-то портит данные.
+dirt_rng = random.Random(SEED + 977)
+
+# Доля событий, продублированных ретраями трекера
+DUPLICATE_SHARE = 0.018
+INTERNAL_ACCOUNTS = 40
+
 
 # --------------------------------------------------------------------------- #
 # Вспомогательное
@@ -150,6 +166,34 @@ def add_months(dt: datetime, months: int) -> datetime:
     day = min(dt.day, [31, 29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28,
                        31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1])
     return dt.replace(year=year, month=month, day=day)
+
+
+def event_uid(event_id: int, user_id: int) -> str:
+    """Идемпотентный ключ события, каким его присылает клиент.
+
+    Настоящие трекеры шлют такой ключ вместе с событием именно затем, чтобы
+    повторная доставка не превратилась в второе событие. По нему и дедуплицируют:
+    ключ переживает ретрай, а идентификатор строки в хранилище — нет.
+    """
+    return f"{event_id:08x}-{user_id:06x}"
+
+
+def ingest_time(occurred: datetime) -> datetime:
+    """Когда событие доехало до хранилища.
+
+    Обычно секунды, иногда минуты, изредка — несколько суток: мобильный клиент
+    копил события офлайн, очередь встала, выгрузка перезапускалась. Из-за этого
+    отчёт за вчера, построенный вчера, и он же, построенный сегодня, дают разные
+    числа — и это не ошибка, а свойство данных.
+    """
+    r = dirt_rng.random()
+    if r < 0.93:
+        lag = timedelta(seconds=dirt_rng.uniform(1, 90))
+    elif r < 0.99:
+        lag = timedelta(minutes=dirt_rng.uniform(5, 600))
+    else:
+        lag = timedelta(days=dirt_rng.uniform(1, 5))
+    return min(occurred + lag, SNAPSHOT - timedelta(seconds=1))
 
 
 def mrr_of(plan_id: int) -> float:
@@ -205,13 +249,14 @@ def generate(target_users: int):
     def log_event(user_id, when, name, platform=None):
         if when >= SNAPSHOT:
             return
-        events.append((next_id("event"), user_id, ts(when), name,
-                       platform or pick(PLATFORMS)))
+        eid = next_id("event")
+        events.append((eid, event_uid(eid, user_id), user_id, ts(when),
+                       ts(ingest_time(when)), name, platform or pick(PLATFORMS)))
 
     # ---- профиль пользователя -------------------------------------------- #
 
     def make_user(user_id, signed_up_at):
-        channel = pick([(c, c[5]) for c in CHANNELS])
+        channel = pick([(c, c[5]) for c in CHANNELS if c[5] > 0])
         company_size = pick(COMPANY_SIZES)
         # корпоративный домен почты тем вероятнее, чем крупнее компания
         p_b2b = {"1": 0.12, "2-10": 0.38, "11-50": 0.62, "51-200": 0.78, "200+": 0.88}[company_size]
@@ -507,8 +552,65 @@ def generate(target_users: int):
                         reactivation_queue.append((back_at, user))
                         reactivation_queue.sort(key=lambda x: x[0])
 
+    add_dirt(users, events, next_id)
+
     return {"users": users, "subscriptions": subs, "subscription_events": sub_events,
             "payments": payments, "events": events, "experiment_assignments": assignments}
+
+
+# --------------------------------------------------------------------------- #
+# Дефекты данных
+# --------------------------------------------------------------------------- #
+
+def add_dirt(users, events, next_id):
+    """Добавляет в сырой слой то, что есть в любой реальной выгрузке.
+
+    Два дефекта, оба типовые:
+
+      1. Служебные аккаунты сотрудников. Ничем не отличаются от обычных
+         пользователей, кроме канала привлечения. Если их не выкинуть, они
+         портят конверсию: в продукт заходят, а платить, естественно, не идут.
+
+      2. Дубли от ретраев трекера. Клиент не получил подтверждения и отправил
+         событие повторно; в хранилище легли две строки с разными
+         идентификаторами и одинаковым идемпотентным ключом.
+
+    Функция вызывается ПОСЛЕ основной генерации и пользуется отдельным потоком
+    случайных чисел, поэтому ничего в уже созданных данных не сдвигает.
+    """
+    # ---- служебные аккаунты ---------------------------------------------- #
+    base_id = max(u[0] for u in users)
+    for i in range(1, INTERNAL_ACCOUNTS + 1):
+        uid = base_id + i
+        # не раньше сорокового дня наблюдения: иначе служебный аккаунт стал бы
+        # самой ранней регистрацией и сдвинул начало календаря в marts.dim_date
+        day = START_DATE + timedelta(days=dirt_rng.randrange(40, 560))
+        signed_up = datetime(day.year, day.month, day.day,
+                             dirt_rng.randrange(9, 20), dirt_rng.randrange(60))
+        users.append((uid, ts(signed_up), 8, "RU", "11-50", "true"))
+
+        # сотрудники заходят проверять сборки: регистрация, пара действий, тишина
+        script = [("signup", 0.0), ("email_confirmed", 0.2), ("project_created", 1.5)]
+        script += [("task_created", 2.0 + j) for j in range(dirt_rng.randrange(0, 6))]
+        for name, offset_h in script:
+            when = signed_up + timedelta(hours=offset_h)
+            if when >= SNAPSHOT:
+                continue
+            eid = next_id("event")
+            events.append((eid, event_uid(eid, uid), uid, ts(when),
+                           ts(ingest_time(when)), name, "web"))
+
+    # ---- дубли от ретраев ------------------------------------------------- #
+    # Список фиксируется до вставки: иначе дубли начали бы дублировать дубли
+    # и распределение съехало бы в сторону нескольких «горячих» событий.
+    originals = list(events)
+    for _ in range(int(len(originals) * DUPLICATE_SHARE)):
+        src = originals[dirt_rng.randrange(len(originals))]
+        arrived = datetime.strptime(src[4], "%Y-%m-%d %H:%M:%S")
+        retry = min(arrived + timedelta(seconds=dirt_rng.uniform(2, 900)),
+                    SNAPSHOT - timedelta(seconds=1))
+        # всё, кроме идентификатора строки и времени доставки, повторяется точь-в-точь
+        events.append((next_id("event"), src[1], src[2], src[3], ts(retry), src[5], src[6]))
 
 
 # --------------------------------------------------------------------------- #
@@ -525,7 +627,8 @@ HEADERS = {
     "subscription_events": ["event_id", "subscription_id", "occurred_at", "event_type", "plan_id",
                             "mrr_before_rub", "mrr_after_rub"],
     "payments": ["payment_id", "subscription_id", "paid_at", "amount_rub", "status", "attempt_no"],
-    "events": ["event_id", "user_id", "occurred_at", "event_name", "platform"],
+    "events": ["event_id", "event_uid", "user_id", "occurred_at", "ingested_at",
+               "event_name", "platform"],
     "experiments": ["experiment_id", "experiment_code", "experiment_name", "hypothesis",
                     "primary_metric", "started_at", "ended_at"],
     "experiment_assignments": ["experiment_id", "user_id", "variant", "assigned_at"],

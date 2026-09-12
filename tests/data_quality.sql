@@ -117,12 +117,72 @@ WITH checks AS (
                    THEN 1 ELSE 0 END),
            'расхождение суммы выручки'
 
-    -- 12. Определение активации согласовано: активированный обязан иметь проект
+    -- 12. Активация в витрине пересчитывается напрямую из лога и сверяется.
+    --
+    --     Первая версия этой проверки спрашивала «нет ли активаций без
+    --     проекта» — и не могла провалиться никогда, потому что наличие
+    --     проекта входит в само определение активации. Тест, который не в
+    --     состоянии упасть, хуже отсутствующего: он создаёт уверенность,
+    --     ничего не проверяя. Здесь показатель считается ВТОРОЙ раз, из
+    --     сырого лога и другим способом, и сравнивается с витриной.
     UNION ALL
-    SELECT '12 Активация подразумевает созданный проект',
-           (SELECT count(*) FROM marts.dim_user
-             WHERE is_activated AND first_project_at IS NULL),
-           'активаций без проекта'
+    SELECT '12 Активация сходится с пересчётом из лога',
+           (SELECT count(*) FROM (
+                SELECT u.user_id,
+                       (count(*) FILTER (WHERE e.event_name = 'project_created') > 0
+                        AND count(*) FILTER (WHERE e.event_name = 'task_created') >= 3)
+                           AS recomputed,
+                       max(d.is_activated::int)::boolean AS from_mart
+                  FROM app.users u
+                  JOIN app.channels c USING (channel_id)
+                  JOIN marts.dim_user d ON d.user_id = u.user_id
+                  LEFT JOIN marts.stg_events e
+                         ON e.user_id = u.user_id
+                        AND e.occurred_at < u.signed_up_at + interval '7 days'
+                 WHERE c.channel_code <> 'internal'
+                 GROUP BY u.user_id
+            ) x WHERE recomputed IS DISTINCT FROM from_mart),
+           'расхождений витрины с логом'
+
+    -- 15. Чистка действительно что-то чистит. Если дубли из сырого слоя
+    --     исчезнут (поменялся генератор, сменился источник), дедупликация
+    --     останется непроверенной — и сломается молча, когда дубли вернутся.
+    UNION ALL
+    SELECT '15 В сыром логе есть дубли, на которых проверяется чистка',
+           (SELECT CASE WHEN count(*) > 0 THEN 0 ELSE 1 END
+              FROM (SELECT event_uid FROM app.events
+                     GROUP BY event_uid HAVING count(*) > 1) d),
+           'дублей не осталось - дедупликация непроверяема'
+
+    -- 16. После чистки дублей нет ни одного
+    UNION ALL
+    SELECT '16 В чистом логе нет дублей по event_uid',
+           (SELECT count(*) FROM (
+                SELECT event_uid FROM marts.stg_events
+                 GROUP BY event_uid HAVING count(*) > 1) d),
+           'повторов после дедупликации'
+
+    -- 17. Служебные аккаунты не протекли в продуктовые витрины
+    UNION ALL
+    SELECT '17 Служебных аккаунтов нет в продуктовых витринах',
+           (SELECT count(*)
+              FROM marts.dim_user d
+              JOIN app.users u USING (user_id)
+              JOIN app.channels c USING (channel_id)
+             WHERE c.channel_code = 'internal'),
+           'служебных аккаунтов в dim_user'
+
+    -- 18. Чистка снимает ровно дубли и служебные события, не задевая остального
+    UNION ALL
+    SELECT '18 Чистка убрала ровно ожидаемое число строк',
+           (SELECT CASE WHEN (SELECT count(*) FROM marts.stg_events)
+                           = (SELECT count(DISTINCT e.event_uid)
+                                FROM app.events e
+                                JOIN app.users u USING (user_id)
+                                JOIN app.channels c USING (channel_id)
+                               WHERE c.channel_code <> 'internal')
+                        THEN 0 ELSE 1 END),
+           'расхождение объёма после чистки'
 
     -- 13. Распределение по вариантам A/B близко к 50/50 (проверка на SRM)
     --     Допуск 4 процентных пункта: при тысяче наблюдений в группе случайное

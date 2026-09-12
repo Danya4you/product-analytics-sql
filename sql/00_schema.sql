@@ -39,7 +39,8 @@ CREATE TABLE app.channels (
     channel_name    text          NOT NULL,
     channel_group   text          NOT NULL,      -- paid | organic | referral
     cac_rub         numeric(10,2) NOT NULL,      -- стоимость привлечения одной регистрации
-    CONSTRAINT channels_group_chk CHECK (channel_group IN ('paid','organic','referral'))
+    CONSTRAINT channels_group_chk
+        CHECK (channel_group IN ('paid','organic','referral','internal'))
 );
 
 COMMENT ON COLUMN app.channels.cac_rub IS
@@ -141,17 +142,26 @@ COMMENT ON COLUMN app.payments.amount_rub IS
 
 CREATE TABLE app.events (
     event_id     bigint    PRIMARY KEY,
+    event_uid    text      NOT NULL,             -- идемпотентный ключ от клиента
     user_id      integer   NOT NULL REFERENCES app.users(user_id),
-    occurred_at  timestamp NOT NULL,
+    occurred_at  timestamp NOT NULL,             -- когда действие произошло
+    ingested_at  timestamp NOT NULL,             -- когда строка доехала до хранилища
     event_name   text      NOT NULL,
-    platform     text      NOT NULL              -- web | mobile | api
+    platform     text      NOT NULL,             -- web | mobile | api
+    CONSTRAINT events_ingest_order_chk CHECK (ingested_at >= occurred_at)
 );
 
 CREATE INDEX events_user_time_idx ON app.events (user_id, occurred_at);
 CREATE INDEX events_name_time_idx ON app.events (event_name, occurred_at);
+CREATE INDEX events_uid_idx       ON app.events (event_uid);
+CREATE INDEX events_ingested_idx  ON app.events (ingested_at);
 
 COMMENT ON TABLE app.events IS
-    'Сырой лог продуктовых событий (аналог выгрузки из трекера). Одна строка — одно действие.';
+    'Сырой лог продуктовых событий. Одна строка — одна ДОСТАВЛЕННАЯ запись, а не одно действие: ретраи трекера кладут дубли. Чистая версия — marts.stg_events.';
+COMMENT ON COLUMN app.events.event_uid IS
+    'Идемпотентный ключ, присвоенный клиентом. НЕ уникален в таблице: повторная доставка того же события приходит с тем же ключом и новым event_id. Ключ дедупликации.';
+COMMENT ON COLUMN app.events.ingested_at IS
+    'Момент попадания в хранилище. Отличается от occurred_at на секунды, иногда на дни — из-за этого отчёт за один и тот же день, построенный в разные даты, даёт разные числа.';
 
 -- -----------------------------------------------------------------------------
 -- A/B-эксперименты

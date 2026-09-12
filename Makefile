@@ -4,7 +4,7 @@
 USERS ?= 12000
 export USERS
 
-.PHONY: all build data analysis test report dashboard clean help
+.PHONY: all build data analysis test report dashboard explain clean help
 
 all: build analysis
 
@@ -14,6 +14,7 @@ help:
 	@echo "make analysis  — прогнать аналитические запросы"
 	@echo "make report    — записать вывод в report/analysis_output.txt"
 	@echo "make dashboard — пересобрать report/dashboard.html из базы"
+	@echo "make explain   — снять планы запросов в report/explain.txt"
 	@echo "make test      — только проверки качества данных"
 	@echo "make clean     — удалить сгенерированные CSV"
 	@echo ""
@@ -33,6 +34,10 @@ report:
 
 dashboard:
 	python scripts/build_dashboard.py
+
+explain:
+	psql -d $${PGDATABASE:-timeline_analytics} --quiet -v ON_ERROR_STOP=1 -f scripts/explain.sql > report/explain.txt
+	@echo "Планы записаны в report/explain.txt" 
 
 test:
 	psql -d $${PGDATABASE:-timeline_analytics} --quiet -v ON_ERROR_STOP=1 -f tests/data_quality.sql
