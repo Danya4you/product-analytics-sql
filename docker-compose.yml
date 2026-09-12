@@ -1,0 +1,29 @@
+# Поднимает PostgreSQL для тех, у кого его нет локально.
+#
+#   docker compose up -d
+#   PGHOST=localhost PGPORT=5433 PGUSER=postgres PGPASSWORD=postgres ./scripts/build.sh
+#
+# Порт 5433, а не 5432, намеренно: чтобы контейнер не конфликтовал с уже
+# установленным на машине сервером.
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: timeline-analytics-db
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: timeline_analytics
+      # Инициализация с явной локалью: иначе сортировка кириллицы зависит от
+      # настроек хоста, и порядок строк в отчётах у разных людей разный.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d timeline_analytics"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:

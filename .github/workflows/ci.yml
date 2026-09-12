@@ -1,0 +1,69 @@
+name: SQL
+
+# Прогон на каждый push: поднять PostgreSQL, собрать витрины, проверить
+# качество данных и выполнить все аналитические запросы. Сломанный запрос или
+# разошедшаяся витрина роняют сборку — иначе репозиторий с аналитикой
+# незаметно протухает.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-analyse:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: timeline_analytics
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: timeline_analytics
+      # В CI набор поменьше: полный прогоняется локально, здесь важно, что всё
+      # выполняется без ошибок, а не конкретные значения метрик.
+      USERS: 4000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Установить клиент PostgreSQL 17
+        run: |
+          sudo sh -c 'echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+          psql --version
+
+      - name: Собрать витрины и прогнать проверки качества
+        run: ./scripts/build.sh
+
+      - name: Выполнить аналитические запросы
+        run: ./scripts/run_analysis.sh report/ci_output.txt
+
+      - name: Сохранить вывод анализа
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-output
+          path: report/ci_output.txt
+          if-no-files-found: warn

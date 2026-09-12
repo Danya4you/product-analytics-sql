@@ -1,0 +1,14 @@
+# Сгенерированные данные: воспроизводятся командой python etl/generate_data.py
+data/*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Редакторы и ОС
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
