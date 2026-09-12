@@ -115,9 +115,22 @@ header a { color: var(--s1); }
 .summary ol { margin: 0; padding-left: 22px; display: grid; gap: 11px; }
 .summary li { font-size: 14px; color: var(--ink2); max-width: 74ch; }
 .summary li b { color: var(--ink); font-weight: 640; }
-.summary a { color: var(--s1); text-decoration: none;
-              border-bottom: 1px solid transparent; }
+.summary a { color: var(--s1); text-decoration: none; cursor: pointer;
+              border-bottom: 1px solid color-mix(in srgb, var(--s1) 35%, transparent); }
 .summary a:hover { border-bottom-color: var(--s1); }
+.summary a::after { content: " 93"; font-size: 11px; }
+
+/* Цель перехода не должна упираться в верхний край окна. */
+figure, .glossary, .summary { scroll-margin-top: 18px; }
+
+/* Короткая вспышка на месте приземления: без неё после прокрутки непонятно,
+   на какой именно блок смотреть. */
+@keyframes landed {
+  0%   { box-shadow: 0 0 0 0 rgba(42, 120, 214, .00); }
+  25%  { box-shadow: 0 0 0 4px rgba(42, 120, 214, .38); }
+  100% { box-shadow: 0 0 0 0 rgba(42, 120, 214, .00); }
+}
+.landed { animation: landed 1.5s ease; }
 .todo { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--grid); }
 .todo h3 { font-size: 15px; margin: 0 0 12px; }
 .todo ol { counter-reset: none; }
@@ -535,7 +548,7 @@ footer { color: var(--muted); font-size: 13px; margin-top: 34px; line-height: 1.
 
 <footer>
   Данные синтетические, сгенерированы <code>etl/generate_data.py</code>: это учебный кейс,
-  а не отчёт настоящей компании. Собрано 13.09.2026 00:12.
+  а не отчёт настоящей компании. Собрано 13.09.2026 00:16.
   Графики нарисованы инлайновым SVG, без внешних библиотек.
 </footer>
 </div>
@@ -609,6 +622,29 @@ footer { color: var(--muted); font-size: 13px; margin-top: 34px; line-height: 1.
   document.addEventListener('focusout', function () { if (pinned) hide(); });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hide(); });
   window.addEventListener('scroll', function () { if (pinned) hide(); }, { passive: true });
+
+  // ---- переходы по внутренним ссылкам ------------------------------------
+  // Штатная навигация по якорям молча не работает, когда страница открыта как
+  // data:-документ или внутри песочницы просмотрщика: хеш не меняется и
+  // прокрутка не происходит. Поэтому прокручиваем сами.
+  //
+  // Обработчик стоит ДО выхода по prefers-reduced-motion: ссылки должны
+  // работать и у тех, кто отключил анимации, просто без плавности.
+  document.addEventListener('click', function (e) {
+    var link = e.target.closest('a[href^="#"]');
+    if (!link) return;
+    var target = document.querySelector(link.getAttribute('href'));
+    if (!target) return;
+    e.preventDefault();
+    // Цель может быть ещё не проявлена: прокрутка к невидимому блоку
+    // выглядит как поломка.
+    target.classList.add('shown');
+    target.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
+    target.classList.remove('landed');
+    void target.offsetWidth;            // перезапуск анимации
+    target.classList.add('landed');
+    setTimeout(function () { target.classList.remove('landed'); }, 1600);
+  });
 
   if (reduced) return;   // дальше только анимации — их пользователь отключил
 
