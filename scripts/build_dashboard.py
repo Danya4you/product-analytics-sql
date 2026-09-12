@@ -117,11 +117,22 @@ qr AS (
     SELECT round(sum(mrr_delta_rub) FILTER (WHERE movement_type IN ('new','reactivation','expansion'))
                  / nullif(abs(sum(mrr_delta_rub) FILTER (WHERE movement_type IN ('contraction','churn'))), 0), 2) AS ratio
     FROM marts.fct_mrr_movement
-    WHERE month >= date_trunc('quarter', marts.snapshot_ts() - interval '3 months')
+    -- Тот же период, что в разделе 3.2 отчёта: текущий квартал. Иначе плитка и
+    -- таблица показывают разные числа под одним названием.
+    WHERE month >= date_trunc('quarter', marts.snapshot_ts())
+),
+ads AS (
+    SELECT
+        (SELECT coalesce(sum(spend_rub), 0) FROM app.ad_spend)          AS spend,
+        coalesce(sum(s.revenue_rub), 0)                                 AS revenue
+    FROM marts.dim_user u
+    LEFT JOIN marts.fct_subscription s ON s.user_id = u.user_id AND s.is_converted
+    WHERE u.is_matured AND u.channel_group = 'paid'
 )
 SELECT live.subs, round(live.mrr) AS mrr, conv.pct AS conversion,
-       nrr.pct AS nrr6, qr.ratio AS quick_ratio
-FROM live, conv, nrr, qr
+       nrr.pct AS nrr6, qr.ratio AS quick_ratio,
+       round(ads.revenue * 0.80 - ads.spend) AS ad_profit
+FROM live, conv, nrr, qr, ads
 """
 
 Q_MRR = """
@@ -218,6 +229,11 @@ def fmt_money(v: float) -> str:
     return f"{v:.0f} ₽"
 
 
+def pct(v, dec: int = 1) -> str:
+    """Процент с десятичной запятой: в русском тексте точка читается как опечатка."""
+    return f"{v:.{dec}f}".replace(".", ",") + " %"
+
+
 def spaced(v) -> str:
     return f"{int(round(float(v))):,}".replace(",", "\u00a0")
 
@@ -267,11 +283,12 @@ def chart_mrr(rows) -> str:
 
     pts = " ".join(f"{sx(i):.1f},{sy(v):.1f}" for i, v in enumerate(vals))
     area = f"{L},{sy(0):.1f} " + pts + f" {sx(len(vals) - 1):.1f},{sy(0):.1f}"
-    s.append(f'<polygon class="area" points="{area}"/>')
-    s.append(f'<polyline class="line-1" points="{pts}"/>')
+    s.append(f'<polygon class="area fade-mark" points="{area}"/>')
+    s.append(f'<polyline class="line-1 draw" points="{pts}"/>')
 
     for i, (r, v) in enumerate(zip(rows, vals)):
-        s.append(f'<circle class="dot hit" cx="{sx(i):.1f}" cy="{sy(v):.1f}" r="9" '
+        s.append(f'<circle class="dot hit fade-mark" cx="{sx(i):.1f}" cy="{sy(v):.1f}" r="9" '
+                 f'style="transition-delay:{300 + i * 22}ms" '
                  f'data-tip="{esc(r["label"])} — {esc(fmt_money(v))}"/>')
     # Подписи оси X — каждый третий месяц, иначе слипаются. Последний месяц
     # подписывается только если между ним и предыдущей подписью есть зазор:
@@ -316,12 +333,14 @@ def chart_movements(rows) -> str:
         cx = L + band * i + band / 2
         g, l = gained[i], lost[i]
         gh = max(2, zero - sy(g))
-        s.append(f'<rect class="bar-pos hit" x="{cx - bw / 2:.1f}" y="{sy(g):.1f}" '
+        s.append(f'<rect class="bar-pos hit col-grow" x="{cx - bw / 2:.1f}" y="{sy(g):.1f}" '
                  f'width="{bw:.1f}" height="{gh:.1f}" rx="4" '
+                 f'style="transform-origin:bottom;transition-delay:{i * 28}ms" '
                  f'data-tip="{esc(r["label"])} — приход {esc(fmt_money(g))}"/>')
         lh = max(2, sy(l) - zero)
-        s.append(f'<rect class="bar-neg hit" x="{cx - bw / 2:.1f}" y="{zero + 2:.1f}" '
+        s.append(f'<rect class="bar-neg hit col-grow" x="{cx - bw / 2:.1f}" y="{zero + 2:.1f}" '
                  f'width="{bw:.1f}" height="{lh:.1f}" rx="4" '
+                 f'style="transform-origin:top;transition-delay:{i * 28}ms" '
                  f'data-tip="{esc(r["label"])} — потери {esc(fmt_money(l))}"/>')
         if i % 3 == 0 or (i == len(rows) - 1 and (len(rows) - 1) % 3 >= 2):
             s.append(f'<text class="axis-label" x="{cx:.1f}" y="{H - B + 26}" '
@@ -344,10 +363,11 @@ def chart_funnel(rows, palette) -> str:
         w = (W - L - 150) * v / top
         s.append(f'<text class="row-label" x="{L - 14}" y="{y + row_h / 2 + 5:.0f}" '
                  f'text-anchor="end">{esc(r["label"])}</text>')
-        s.append(f'<rect class="funnel-bar hit" x="{L}" y="{y}" width="{max(w, 3):.1f}" '
+        s.append(f'<rect class="funnel-bar hit bar-grow" x="{L}" y="{y}" width="{max(w, 3):.1f}" '
                  f'height="{row_h}" rx="4" fill="{palette["ramp"][i]}" '
+                 f'style="transition-delay:{i * 90}ms" '
                  f'data-tip="{esc(r["label"])} — {esc(spaced(v))} чел., '
-                 f'{v / top * 100:.1f}% от старта"/>')
+                 f'{pct(v / top * 100)} от старта"/>')
         label = f'{spaced(v)}  ·  {v / top * 100:.1f}%'
         s.append(f'<text class="value-label" x="{L + w + 12:.1f}" '
                  f'y="{y + row_h / 2 + 5:.0f}">{esc(label)}</text>')
@@ -374,8 +394,9 @@ def chart_attribution(rows, palette) -> str:
         w = (W - L - 150) * v / top
         s.append(f'<text class="row-label" x="{L - 14}" y="{y + row_h / 2 + 5:.0f}" '
                  f'text-anchor="end">{esc(r["label"])}</text>')
-        s.append(f'<rect class="funnel-bar hit" x="{L}" y="{y}" width="{max(w, 3):.1f}" '
+        s.append(f'<rect class="funnel-bar hit bar-grow" x="{L}" y="{y}" width="{max(w, 3):.1f}" '
                  f'height="{row_h}" rx="4" fill="{palette["ramp"][min(i, 4)]}" '
+                 f'style="transition-delay:{i * 90}ms" '
                  f'data-tip="{esc(r["label"])} — {esc(spaced(v))} регистраций, '
                  f'{esc(r["share"])}%"/>')
         shown = str(r["share"]).replace(".", ",")
@@ -400,11 +421,13 @@ def chart_retention(rows) -> str:
     s += gridlines(L, W - R, nice_ticks(vmax), sy, lambda v: f"{v:.0f}%")
     for series, cls in ((a, "line-1"), (o, "line-2")):
         pts = " ".join(f"{sx(i):.1f},{sy(v):.1f}" for i, v in enumerate(series))
-        s.append(f'<polyline class="{cls}" points="{pts}"/>')
+        s.append(f'<polyline class="{cls} draw" points="{pts}"/>')
     for i, r in enumerate(rows):
-        s.append(f'<circle class="dot-1 hit" cx="{sx(i):.1f}" cy="{sy(a[i]):.1f}" r="9" '
+        s.append(f'<circle class="dot-1 hit fade-mark" cx="{sx(i):.1f}" cy="{sy(a[i]):.1f}" r="9" '
+                 f'style="transition-delay:{400 + i * 45}ms" '
                  f'data-tip="Неделя {esc(r["label"])} — активированные {a[i]:.1f}%"/>')
-        s.append(f'<circle class="dot-2 hit" cx="{sx(i):.1f}" cy="{sy(o[i]):.1f}" r="9" '
+        s.append(f'<circle class="dot-2 hit fade-mark" cx="{sx(i):.1f}" cy="{sy(o[i]):.1f}" r="9" '
+                 f'style="transition-delay:{400 + i * 45}ms" '
                  f'data-tip="Неделя {esc(r["label"])} — остальные {o[i]:.1f}%"/>')
         s.append(f'<text class="axis-label" x="{sx(i):.1f}" y="{H - B + 20}" '
                  f'text-anchor="middle">Н{esc(r["label"])}</text>')
@@ -437,8 +460,9 @@ def chart_channels(rows) -> str:
         word = {"crit": "убыточен", "warn": "на грани", "good": "окупается"}[state]
         s.append(f'<text class="row-label" x="{L - 14}" y="{y + row_h / 2 + 5:.0f}" '
                  f'text-anchor="end">{esc(r["label"])}</text>')
-        s.append(f'<rect class="bar-{state} hit" x="{L}" y="{y}" '
+        s.append(f'<rect class="bar-{state} hit bar-grow" x="{L}" y="{y}" '
                  f'width="{max(v * scale, 3):.1f}" height="{row_h}" rx="4" '
+                 f'style="transition-delay:{i * 100}ms" '
                  f'data-tip="{esc(r["label"])} — LTV/CAC {v:.2f} ({word}), '
                  f'конверсия {esc(r["conversion"])}%"/>')
         # Десятичная запятая ставится ТОЛЬКО в подписи. Соблазн написать
@@ -480,30 +504,58 @@ def css() -> str:
 
 * {{ box-sizing: border-box; }}
 body {{
-  margin: 0; padding: 32px 20px 64px;
+  margin: 0; padding: 40px 20px 72px;
   background: var(--plane); color: var(--ink);
-  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
 }}
-.wrap {{ max-width: 900px; margin: 0 auto; }}
-header h1 {{ font-size: 26px; margin: 0 0 6px; letter-spacing: -0.01em; }}
-header p {{ margin: 0 0 28px; color: var(--ink2); }}
+.wrap {{ max-width: 920px; margin: 0 auto; }}
+
+header {{ margin-bottom: 30px; }}
+header h1 {{ font-size: 30px; margin: 0 0 12px; letter-spacing: -0.025em; line-height: 1.18; }}
+header .lead {{ margin: 0 0 12px; color: var(--ink2); font-size: 16px; max-width: 62ch; }}
+header .meta {{ margin: 0; color: var(--muted); font-size: 13px; }}
 header a {{ color: var(--s1); }}
 
-.tiles {{ display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); margin-bottom: 32px; }}
-.tile {{ background: var(--surface); border: 1px solid var(--grid); border-radius: 10px; padding: 16px 18px; }}
-.tile .k {{ font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }}
-.tile .v {{ font-size: 25px; font-weight: 650; margin-top: 6px; letter-spacing: -0.02em;
-           font-variant-numeric: tabular-nums; white-space: nowrap; }}
-.tile .n {{ font-size: 12px; color: var(--ink2); margin-top: 4px; }}
+.howto {{ margin: 20px 0 0; padding: 14px 17px; border-radius: 10px;
+          background: var(--surface); border: 1px solid var(--grid);
+          font-size: 13.5px; color: var(--ink2); line-height: 1.65; }}
+.howto b {{ color: var(--ink); font-weight: 620; }}
 
-figure {{ margin: 0 0 30px; background: var(--surface); border: 1px solid var(--grid);
-          border-radius: 10px; padding: 20px 22px 16px; }}
-figure h2 {{ font-size: 16px; margin: 0 0 3px; }}
-figure .sub {{ font-size: 13px; color: var(--ink2); margin: 0 0 16px; }}
-figcaption {{ font-size: 13px; color: var(--ink2); margin-top: 12px;
-              border-top: 1px solid var(--grid); padding-top: 12px; }}
+.tiles {{ display: grid; gap: 12px; margin: 34px 0 8px;
+          grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }}
+.tile {{ background: var(--surface); border: 1px solid var(--grid); border-radius: 12px;
+         padding: 15px 17px 14px 19px; position: relative; overflow: hidden; }}
+.tile::before {{ content: ""; position: absolute; inset: 0 auto 0 0; width: 3px;
+                 background: var(--s1); opacity: .5; }}
+.tile.good::before {{ background: var(--good); opacity: 1; }}
+.tile.warn::before {{ background: var(--warn); opacity: 1; }}
+.tile.crit::before {{ background: var(--crit); opacity: 1; }}
+.tile .k {{ font-size: 12.5px; color: var(--muted); }}
+.tile .v {{ font-size: 26px; font-weight: 660; margin-top: 6px; letter-spacing: -0.025em;
+            font-variant-numeric: tabular-nums; white-space: nowrap; }}
+.tile .n {{ font-size: 12.5px; color: var(--ink2); margin-top: 5px; line-height: 1.45; }}
+.tile .flag {{ display: inline-block; margin-top: 7px; font-size: 11.5px; font-weight: 620;
+               padding: 2px 8px; border-radius: 20px; border: 1px solid var(--grid); }}
+.tile.good .flag {{ color: var(--good); }}
+.tile.warn .flag {{ color: var(--warn); }}
+.tile.crit .flag {{ color: var(--crit); }}
+
+.section {{ font-size: 12.5px; font-weight: 650; letter-spacing: .09em;
+            text-transform: uppercase; color: var(--muted);
+            margin: 42px 0 16px; padding-bottom: 9px; border-bottom: 1px solid var(--grid); }}
+
+figure {{ margin: 0 0 22px; background: var(--surface); border: 1px solid var(--grid);
+          border-radius: 12px; padding: 22px 24px 18px; }}
+figure h3 {{ font-size: 17.5px; margin: 0 0 6px; letter-spacing: -0.015em; }}
+figure .sub {{ font-size: 13.5px; color: var(--ink2); margin: 0 0 18px; max-width: 70ch; }}
+figcaption {{ font-size: 13.5px; color: var(--ink2); margin-top: 14px;
+              border-top: 1px solid var(--grid); padding-top: 13px; max-width: 74ch; }}
+figcaption b {{ color: var(--ink); font-weight: 620; }}
 .scroll {{ overflow-x: auto; }}
 svg {{ width: 100%; height: auto; min-width: 560px; display: block; }}
+
+.term {{ border-bottom: 1px dashed var(--muted); cursor: help; }}
 
 .grid {{ stroke: var(--grid); stroke-width: 1; }}
 .axis {{ stroke: var(--axis); stroke-width: 1.5; }}
@@ -511,15 +563,17 @@ svg {{ width: 100%; height: auto; min-width: 560px; display: block; }}
 .threshold-label {{ fill: var(--muted); font-size: 12px; }}
 .axis-label {{ fill: var(--muted); font-size: 12px; }}
 .row-label {{ fill: var(--ink2); font-size: 13px; }}
-.value-label {{ fill: var(--ink); font-size: 13px; font-weight: 600;
+.value-label {{ fill: var(--ink); font-size: 13px; font-weight: 620;
                 font-variant-numeric: tabular-nums; }}
 .drop-label {{ fill: var(--muted); font-size: 11px; }}
-.series-label {{ font-size: 12px; font-weight: 600; }}
+.series-label {{ font-size: 12px; font-weight: 620; }}
 .series-label.s1 {{ fill: var(--s1); }}
 .series-label.s2 {{ fill: var(--s2); }}
 
-.line-1 {{ fill: none; stroke: var(--s1); stroke-width: 2; stroke-linejoin: round; }}
-.line-2 {{ fill: none; stroke: var(--s2); stroke-width: 2; stroke-linejoin: round; }}
+.line-1 {{ fill: none; stroke: var(--s1); stroke-width: 2.2;
+           stroke-linejoin: round; stroke-linecap: round; }}
+.line-2 {{ fill: none; stroke: var(--s2); stroke-width: 2.2;
+           stroke-linejoin: round; stroke-linecap: round; }}
 .area {{ fill: var(--s1); opacity: .12; }}
 .dot, .dot-1 {{ fill: var(--s1); stroke: var(--surface); stroke-width: 2; }}
 .dot-2 {{ fill: var(--s2); stroke: var(--surface); stroke-width: 2; }}
@@ -527,21 +581,63 @@ svg {{ width: 100%; height: auto; min-width: 560px; display: block; }}
 .bar-neg {{ fill: var(--neg); stroke: var(--surface); stroke-width: 2; }}
 .bar-good {{ fill: var(--good); }} .bar-warn {{ fill: var(--warn); }} .bar-crit {{ fill: var(--crit); }}
 .funnel-bar {{ stroke: var(--surface); stroke-width: 2; }}
-.hit {{ cursor: default; }}
-.hit:hover {{ opacity: .82; }}
+.hit {{ cursor: default; transition: opacity .15s; }}
+.hit:hover {{ opacity: .78; }}
 
-#tip {{ position: fixed; pointer-events: none; opacity: 0; transition: opacity .1s;
-        background: var(--ink); color: var(--surface); font-size: 12.5px;
-        padding: 6px 10px; border-radius: 6px; max-width: 280px; z-index: 9; }}
+#tip {{ position: fixed; pointer-events: none; opacity: 0; transition: opacity .12s;
+        background: var(--ink); color: var(--surface); font-size: 12.5px; line-height: 1.45;
+        padding: 7px 11px; border-radius: 7px; max-width: 300px; z-index: 9;
+        box-shadow: 0 4px 16px rgba(0,0,0,.18); }}
 
-table {{ border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 4px; }}
-th, td {{ text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--grid); }}
+table {{ border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 6px; }}
+th, td {{ text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--grid); }}
 th:first-child, td:first-child {{ text-align: left; }}
-th {{ color: var(--muted); font-weight: 600; }}
+th {{ color: var(--muted); font-weight: 620; }}
 td {{ font-variant-numeric: tabular-nums; }}
 details summary {{ cursor: pointer; color: var(--ink2); font-size: 13px; margin-top: 12px; }}
-footer {{ color: var(--muted); font-size: 13px; margin-top: 36px; }}
+details[open] summary {{ margin-bottom: 6px; }}
+
+.glossary {{ margin-top: 42px; background: var(--surface); border: 1px solid var(--grid);
+             border-radius: 12px; padding: 22px 24px; }}
+.glossary h3 {{ font-size: 17px; margin: 0 0 14px; }}
+.glossary dl {{ margin: 0; display: grid; gap: 12px; }}
+.glossary dt {{ font-weight: 650; font-size: 14px; }}
+.glossary dd {{ margin: 3px 0 0; color: var(--ink2); font-size: 13.5px; max-width: 76ch; }}
+
+footer {{ color: var(--muted); font-size: 13px; margin-top: 34px; line-height: 1.65; }}
+
+/* ======================= анимации ======================= */
+/* Класс anim ставит скрипт. Если скрипт не выполнился, всё видно сразу:
+   страница не должна зависеть от JavaScript, чтобы показать содержимое.
+   Всё выключается, если в системе включено «уменьшить движение». */
+@media (prefers-reduced-motion: no-preference) {{
+  html.anim .reveal {{ opacity: 0; transform: translateY(16px); }}
+  html.anim .reveal.shown {{ opacity: 1; transform: none;
+      transition: opacity .55s ease, transform .55s cubic-bezier(.22,.7,.3,1); }}
+
+  html.anim .bar-grow {{ transform: scaleX(0); transform-box: fill-box;
+                         transform-origin: left center; }}
+  html.anim .shown .bar-grow {{ transform: scaleX(1);
+      transition: transform .75s cubic-bezier(.22,.75,.28,1); }}
+
+  html.anim .col-grow {{ transform: scaleY(0); transform-box: fill-box; }}
+  html.anim .shown .col-grow {{ transform: scaleY(1);
+      transition: transform .6s cubic-bezier(.22,.75,.28,1); }}
+
+  html.anim .fade-mark {{ opacity: 0; }}
+  html.anim .shown .fade-mark {{ opacity: 1; transition: opacity .5s ease; }}
+  html.anim .shown .area.fade-mark {{ opacity: .12; }}
+
+  html.anim .draw {{ stroke-dashoffset: var(--len); }}
+  html.anim .shown .draw {{ stroke-dashoffset: 0;
+      transition: stroke-dashoffset 1.15s cubic-bezier(.4,.1,.2,1); }}
+}}
 """
+
+
+def term(word: str, explanation: str) -> str:
+    """Термин с пояснением по наведению — чтобы жаргон не отпугивал читателя."""
+    return f'<span class="term" data-tip="{esc(explanation)}">{esc(word)}</span>'
 
 
 def table(headers, rows) -> str:
@@ -551,15 +647,60 @@ def table(headers, rows) -> str:
 
 
 def figure(title, sub, svg, caption, table_html=None) -> str:
-    extra = (f'<details><summary>Показать таблицей</summary>{table_html}</details>'
+    extra = (f'<details><summary>Показать числами</summary>{table_html}</details>'
              if table_html else "")
-    return f"""<figure>
-  <h2>{esc(title)}</h2>
-  <p class="sub">{esc(sub)}</p>
+    return f"""<figure class="reveal">
+  <h3>{title}</h3>
+  <p class="sub">{sub}</p>
   <div class="scroll">{svg}</div>
   <figcaption>{caption}</figcaption>
   {extra}
 </figure>"""
+
+
+def tile(name, value, num, dec, suffix, note, state=None, flag=None) -> str:
+    cls = f"tile reveal {state}" if state else "tile reveal"
+    flag_html = f'<div class="flag">{esc(flag)}</div>' if flag else ""
+    return (f'<div class="{cls}"><div class="k">{esc(name)}</div>'
+            f'<div class="v" data-num="{num}" data-dec="{dec}" data-suffix="{esc(suffix)}">'
+            f'{esc(value)}</div>'
+            f'<div class="n">{note}</div>{flag_html}</div>')
+
+
+GLOSSARY = [
+    ("Подписка и MRR",
+     "Клиент платит за пользование сервисом каждый месяц. MRR — сумма всех таких "
+     "ежемесячных платежей. У годовых подписок цена делится на 12, иначе в месяц "
+     "оплаты выручка подскакивала бы в двенадцать раз."),
+    ("Конверсия",
+     "Доля тех, кто дошёл до нужного шага. «Конверсия в оплату 19,6 %» означает, что "
+     "из ста зарегистрировавшихся платить начинают около двадцати."),
+    ("Пробный период и активация",
+     "Первые 14 дней сервисом пользуются бесплатно. Активация — когда человек за "
+     "первую неделю завёл проект и создал минимум три задачи, то есть реально начал "
+     "работать, а не просто заглянул."),
+    ("Когорта",
+     "Группа клиентов, пришедших в один период. Их сравнивают между собой, чтобы "
+     "отличить изменения в продукте от того, что просто пришли другие люди."),
+    ("Удержание",
+     "Сколько человек из группы продолжают пользоваться сервисом через неделю, месяц, "
+     "полгода. Показывает, нужен ли продукт после первого интереса."),
+    ("Отток",
+     "Уход клиента: он отменил подписку или у него перестал проходить платёж. Второе "
+     "встречается чаще, чем кажется, и лечится не продуктом, а повторными списаниями."),
+    ("NRR",
+     "Сколько денег остаётся от группы клиентов спустя время. 79 % через полгода "
+     "значит, что от каждой тысячи рублей осталось 790 — часть ушла с клиентами, "
+     "часть вернулась за счёт перехода оставшихся на дорогие тарифы."),
+    ("CAC и LTV",
+     "CAC — сколько стоило привести одного платящего клиента. LTV — сколько денег он "
+     "принесёт за всё время. Отношение LTV к CAC показывает, окупается ли канал: "
+     "меньше единицы — вложенное не вернётся никогда."),
+    ("Атрибуция",
+     "Определение источника, из которого пришёл клиент. В момент клика по рекламе "
+     "аккаунта ещё нет, поэтому источник восстанавливают по следам в браузере — и у "
+     "части людей следов не остаётся вовсе."),
+]
 
 
 def build(psql: str) -> str:
@@ -573,117 +714,185 @@ def build(psql: str) -> str:
 
     top = float(funnel[0]["users"])
     paid = float(funnel[-1]["users"])
+    biggest_drop = max(
+        ((float(funnel[i - 1]["users"]) - float(funnel[i]["users"]), funnel[i]["label"])
+         for i in range(1, len(funnel))), key=lambda x: x[0])
     losing = [r["label"] for r in channels if r["ltv_cac"] and float(r["ltv_cac"]) < 1]
+    unknown = next((r for r in attribution if "не определ" in r["label"].lower()), None)
 
-    tiles = [
-        ("MRR", fmt_money(float(kpi["mrr"])), "на дату среза"),
-        ("Живых подписок", spaced(kpi["subs"]), "активны сейчас"),
-        ("Конверсия в оплату", f'{kpi["conversion"]}%'.replace(".", ","), "из регистрации"),
-        ("NRR на 6-й месяц", f'{kpi["nrr6"]}%'.replace(".", ","), "по зрелым когортам"),
-        ("Quick Ratio", str(kpi["quick_ratio"]).replace(".", ","), "последний квартал"),
-    ]
-    tiles_html = "".join(
-        f'<div class="tile"><div class="k">{esc(k)}</div>'
-        f'<div class="v">{esc(v)}</div><div class="n">{esc(n)}</div></div>'
-        for k, v, n in tiles)
+    mrr_val = float(kpi["mrr"])
+    qr = float(kpi["quick_ratio"])
+    nrr = float(kpi["nrr6"])
+    profit = float(kpi["ad_profit"])
 
-    figures = [
+    tiles = "".join([
+        tile("Выручка в месяц", fmt_money(mrr_val), mrr_val / 1_000_000, 2, " млн ₽",
+             f'Столько сервис получает каждый месяц от действующих подписок — это и есть '
+             f'{term("MRR", "Monthly Recurring Revenue: сумма всех регулярных ежемесячных платежей")}.'),
+        tile("Платящих клиентов", spaced(kpi["subs"]), float(kpi["subs"]), 0, "",
+             "Подписок, действующих на дату отчёта."),
+        tile("Доходят до оплаты", f'{kpi["conversion"]}%'.replace(".", ","),
+             float(kpi["conversion"]), 1, "%",
+             "Из зарегистрировавшихся, кто успел пройти пробный период и принять решение."),
+        tile("Денег остаётся через полгода", f'{kpi["nrr6"]}%'.replace(".", ","), nrr, 1, "%",
+             f'От суммы, которую та же группа платила в первый месяц '
+             f'({term("NRR", "Net Revenue Retention: удержание выручки по когорте")}).',
+             state="good" if nrr >= 100 else ("warn" if nrr >= 75 else "crit"),
+             flag="норма" if nrr >= 100 else "ниже нормы"),
+        tile("Приход против потерь", f"{qr:.2f}×".replace(".", ","), qr, 2, "×",
+             f'Во столько раз новые деньги перекрывают потерянные за последний квартал '
+             f'({term("Quick Ratio", "Отношение прироста MRR к его потерям. Ниже 1 — компания сжимается")}).',
+             state="good" if qr >= 4 else ("warn" if qr >= 1 else "crit"),
+             flag="растёт" if qr >= 1 else "сжимается"),
+        tile("Реклама", fmt_money(profit), profit / 1_000_000, 1, " млн ₽",
+             "Прибыль от платных каналов за всё время с учётом затрат на них.",
+             state="good" if profit > 0 else "crit",
+             flag="окупается" if profit > 0 else "не окупается"),
+    ])
+
+    money_figs = [
         figure(
-            "MRR нарастающим итогом",
-            "Накопленная сумма всех движений: новые подписки, апгрейды, даунгрейды, отток",
+            "Сколько денег приносят подписки",
+            "Ежемесячная выручка от всех действующих подписок, накопленным итогом: "
+            "каждая точка — сумма, которую сервис получает в этом месяце.",
             chart_mrr(mrr),
-            "Ровный рост без единого отрицательного месяца. Это не значит, что всё "
-            "хорошо: график суммы скрывает, какой ценой он растёт — см. следующий.",
-            table(["Месяц", "MRR, ₽"], [(r["label"], spaced(r["mrr"])) for r in mrr]),
+            "<b>Вывод.</b> Выручка росла все двадцать месяцев без единого падения. "
+            "Но график суммы не показывает, какой ценой этот рост даётся — для этого "
+            "нужен следующий.",
+            table(["Месяц", "Выручка в месяц, ₽"], [(r["label"], spaced(r["mrr"])) for r in mrr]),
         ),
         figure(
-            "Приход против потерь",
-            "Тот же MRR, разложенный на составляющие: вверх — новые, вернувшиеся и апгрейды; вниз — даунгрейды и отток",
+            "Откуда берутся и куда уходят деньги",
+            "Тот же рост, разложенный на части. Вверх — новые подписки, вернувшиеся "
+            "клиенты и переходы на дорогой тариф. Вниз — переходы на дешёвый тариф и "
+            "ушедшие клиенты.",
             chart_movements(move),
-            "Потери растут быстрее прихода: Quick Ratio упал с 15,7 до "
-            f'{str(kpi["quick_ratio"]).replace(".", ",")}. Рост держится, но запас прочности сокращается.',
+            f"<b>Вывод.</b> Синие столбцы почти не растут, красные растут заметно: "
+            f"приход перекрывает потери уже только в {str(kpi['quick_ratio']).replace('.', ',')} раза "
+            f"против четырнадцати в начале периода. Компания всё ещё растёт, но запас "
+            f"прочности сокращается.",
             table(["Месяц", "Приход, ₽", "Потери, ₽"],
                   [(r["label"], spaced(r["gained"]), spaced(r["lost"])) for r in move]),
         ),
+    ]
+
+    people_figs = [
         figure(
-            "Воронка до первой оплаты",
-            "Только пользователи, успевшие пройти триал и принять решение",
+            "Путь от регистрации до оплаты",
+            "Каждая полоса — сколько человек дошли до этого шага. Серые числа слева "
+            "показывают, сколько людей потерялось между шагами.",
             chart_funnel(funnel, LIGHT),
-            f'Из {spaced(top)} регистраций платят {spaced(paid)} — {paid / top * 100:.1f}%. '
-            "Крупнейшая потеря — между подтверждением почты и первым проектом.",
-            table(["Шаг", "Пользователей", "От старта"],
-                  [(r["label"], spaced(r["users"]),
-                    f'{float(r["users"]) / top * 100:.1f}%'.replace(".", ","))
+            f"<b>Вывод.</b> Из {spaced(top)} зарегистрировавшихся платят {spaced(paid)} — "
+            f"{pct(paid / top * 100)}. Самая большая потеря — {spaced(biggest_drop[0])} человек "
+            f"на шаге «{esc(biggest_drop[1])}»: люди подтвердили почту и не начали работать. "
+            f"Это единственное место, где имеет смысл что-то менять в первую очередь.",
+            table(["Шаг", "Человек", "От старта"],
+                  [(r["label"], spaced(r["users"]), pct(float(r["users"]) / top * 100))
                    for r in funnel]),
         ),
         figure(
-            "Качество атрибуции",
-            "У скольких регистраций удалось восстановить канал привлечения",
+            "Сколько людей продолжают пользоваться",
+            "Доля тех, кто на очередной неделе после регистрации создавал или закрывал "
+            "задачи. Просто вход в систему не считается: заглянуть и уйти — не работа. "
+            "Синяя линия — те, кто освоился в первую неделю, оранжевая — все остальные.",
+            chart_retention(retention),
+            "<b>Вывод.</b> Разрыв между линиями не сокращается к восьмой неделе. Значит, "
+            "первая неделя не просто даёт всплеск интереса, а разделяет пришедших на две "
+            "разные по качеству группы — и работать надо именно с ней.",
+            table(["Неделя", "Освоились, %", "Остальные, %"],
+                  [(f'Н{r["label"]}', r["activated"], r["other"]) for r in retention]),
+        ),
+    ]
+
+    unknown_txt = (f'У {esc(unknown["share"])} % регистраций источник определить не удалось.'
+                   if unknown else "")
+    market_figs = [
+        figure(
+            "Знаем ли мы, откуда пришёл клиент",
+            "Источник перехода не хранится готовым — его восстанавливают по следам в "
+            "браузере до регистрации. Следы остаются не всегда: мешают блокировщики, "
+            "переходы из мессенджеров и потерянные при переадресации метки.",
             chart_attribution(attribution, LIGHT),
-            "Канала в базе нет — он выводится из маркетинговых касаний на "
-            "устройстве. У части регистраций касаний не сохранилось: "
-            "заблокированы куки, потерялись метки при редиректе. Такие "
-            "регистрации нельзя ни выбросить, ни приписать к прямым — все доли "
-            "каналов ниже считаются с учётом этой дыры.",
+            f"<b>Вывод.</b> {unknown_txt} Этих людей нельзя ни выбросить из отчёта — тогда "
+            f"доли каналов окажутся посчитаны не от всех, — ни записать в «прямые заходы»: "
+            f"прямой канал раздуется на пустом месте. Поэтому они идут отдельной строкой, "
+            f"а стоимость привлечения ниже считается вилкой, а не одним числом.",
             table(["Качество", "Регистраций", "Доля, %"],
                   [(r["label"], spaced(r["users"]), r["share"]) for r in attribution]),
         ),
         figure(
-            "Удержание по неделям жизни",
-            "Доля когорты, совершившей целевое действие: создание проекта, создание или закрытие задачи",
-            chart_retention(retention),
-            "Разрыв между активированными и остальными не схлопывается к восьмой неделе — "
-            "активация отбирает другую по качеству популяцию, а не даёт временный всплеск.",
-            table(["Неделя", "Активированные, %", "Остальные, %"],
-                  [(f'Н{r["label"]}', r["activated"], r["other"]) for r in retention]),
-        ),
-        figure(
-            "Окупаемость платных каналов",
-            "Отношение модельной LTV к стоимости привлечения платящего. Только каналы, по которым есть расход из рекламных кабинетов",
+            "Окупается ли реклама",
+            "Во сколько раз клиент приносит больше, чем стоило его привлечение. "
+            "Пунктир — граница безубыточности: левее неё канал не вернёт вложенного.",
             chart_channels(channels),
-            (f'Убыточны: {esc(", ".join(losing))}. ' if losing else "")
-            + "Органика и рефералка сюда не попадают: затраты на них существуют, "
-            "но в данных их нет, а деление на ноль дало бы бесконечную окупаемость. "
-            "LTV модельная и завышена допущением о постоянном оттоке — "
-            'подробности в <a href="../docs/metrics.md">словаре метрик</a>.',
-            table(["Канал", "LTV/CAC", "Конверсия, %"],
-                  [(r["label"], r["ltv_cac"], r["conversion"]) for r in channels]),
+            (f"<b>Вывод.</b> Убыточны: {esc(', '.join(losing))}. " if losing else "<b>Вывод.</b> ")
+            + "Бесплатные каналы — поиск, блог, рекомендации — сюда не попали: расходы на "
+            "них существуют (авторы, продвижение, зарплаты), но в данных их нет, а делить "
+            "на ноль нечестно. Показатель модельный и завышен, поэтому смотреть стоит не на "
+            "абсолютное значение, а на то, по какую сторону пунктира оказался канал.",
+            table(["Канал", "Окупаемость (LTV/CAC)", "Конверсия, %"],
+                  [(r["label"], str(r["ltv_cac"]).replace(".", ","), r["conversion"])
+                   for r in channels]),
         ),
     ]
 
+    glossary = "".join(f"<dt>{esc(t)}</dt><dd>{esc(d)}</dd>" for t, d in GLOSSARY)
     built = datetime.now().strftime("%d.%m.%Y %H:%M")
+
     return f"""<!doctype html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Тайм-лайн — продуктовые метрики</title>
+<title>Тайм-лайн — как живёт сервис</title>
 <style>{css()}</style>
 </head>
 <body>
 <div class="wrap">
 <header>
-  <h1>SaaS «Тайм-лайн» — продуктовые метрики</h1>
-  <p>Данные на 1 сентября 2026 года. Собрано из базы скриптом
-     <code>scripts/build_dashboard.py</code>, числа не правились руками.
-     Подробный разбор — в <a href="../docs/findings.md">выводах</a>.</p>
+  <h1>«Тайм-лайн» — как живёт сервис</h1>
+  <p class="lead">Отчёт о том, откуда приходят клиенты, сколько из них начинают платить,
+     надолго ли остаются и окупается ли реклама. Данные за 20 месяцев, на 1 сентября 2026 года.</p>
+  <p class="meta">Собрано из базы скриптом <code>scripts/build_dashboard.py</code> — числа
+     не правились руками. Подробный разбор с оговорками — в <a href="../docs/findings.md">выводах</a>.</p>
+  <div class="howto">
+    <b>Как читать.</b> Слова, подчёркнутые пунктиром, — термины: наведите курсор, появится
+    объяснение простыми словами. Наведите на любой столбец или точку — покажет точные числа.
+    Под каждым графиком есть вывод одной фразой, а под ним — те же данные таблицей.
+    Незнакомые сокращения собраны в <a href="#glossary">словаре внизу</a>.
+  </div>
 </header>
 
-<div class="tiles">{tiles_html}</div>
+<div class="tiles">{tiles}</div>
 
-{"".join(figures)}
+<h2 class="section">Деньги</h2>
+{"".join(money_figs)}
+
+<h2 class="section">Клиенты</h2>
+{"".join(people_figs)}
+
+<h2 class="section">Откуда приходят клиенты</h2>
+{"".join(market_figs)}
+
+<section class="glossary reveal" id="glossary">
+  <h3>Словарь</h3>
+  <dl>{glossary}</dl>
+</section>
 
 <footer>
-  Синтетические данные, сгенерированы <code>etl/generate_data.py</code>.
-  Собрано {built}. Графики — инлайновый SVG без внешних библиотек.
+  Данные синтетические, сгенерированы <code>etl/generate_data.py</code>: это учебный кейс,
+  а не отчёт настоящей компании. Собрано {built}.
+  Графики нарисованы инлайновым SVG, без внешних библиотек.
 </footer>
 </div>
 
 <div id="tip" role="status"></div>
 <script>
-// Подсказки при наведении: один обработчик на документ вместо слушателя
-// на каждой из нескольких сотен фигур.
 (function () {{
+  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ---- подсказки при наведении -------------------------------------------
+  // Один обработчик на документ вместо слушателя на каждой из сотен фигур.
   var tip = document.getElementById('tip');
   document.addEventListener('mouseover', function (e) {{
     var el = e.target.closest('[data-tip]');
@@ -703,6 +912,71 @@ def build(psql: str) -> str:
   document.addEventListener('mouseout', function (e) {{
     if (e.target.closest('[data-tip]')) tip.style.opacity = '0';
   }});
+
+  if (reduced) return;   // дальше только анимации — их пользователь отключил
+
+  // Класс ставится скриптом: без JavaScript страница показывает всё сразу,
+  // а не остаётся пустой из-за нулевой прозрачности.
+  document.documentElement.classList.add('anim');
+
+  // ---- линии: длину контура знает только браузер --------------------------
+  document.querySelectorAll('.draw').forEach(function (el) {{
+    var len = el.getTotalLength();
+    el.style.setProperty('--len', len + 'px');
+    el.style.strokeDasharray = len;
+  }});
+
+  // ---- появление блоков при прокрутке ------------------------------------
+  function reveal(el) {{ el.classList.add('shown'); }}
+  var io = window.IntersectionObserver ? new IntersectionObserver(function (entries) {{
+    entries.forEach(function (en) {{
+      if (!en.isIntersecting) return;
+      reveal(en.target);
+      io.unobserve(en.target);
+      if (en.target.classList.contains('tile')) countUp(en.target.querySelector('.v'));
+    }});
+  }}, {{ rootMargin: '0px 0px -8% 0px', threshold: 0.12 }}) : null;
+
+  var items = document.querySelectorAll('.reveal');
+  if (!io) {{ items.forEach(showAll); return; }}
+  items.forEach(function (el, i) {{
+    if (el.classList.contains('tile')) el.style.transitionDelay = (i * 55) + 'ms';
+    io.observe(el);
+  }});
+
+  // Страховка. Если наблюдатель не сработает — страницу печатают, снимают
+  // миниатюру, отрисовывают в нестандартном окружении, — содержимое обязано
+  // проявиться само. Скрытый навсегда блок хуже отсутствия анимации.
+  function showAll(el) {{
+    reveal(el);
+    if (el.classList.contains('tile')) countUp(el.querySelector('.v'));
+  }}
+  setTimeout(function () {{ items.forEach(showAll); }}, 2500);
+
+  // ---- счётчик в плитках --------------------------------------------------
+  function fmt(n, dec, suffix) {{
+    var t = dec > 0 ? n.toFixed(dec).replace('.', ',')
+                    : Math.round(n).toLocaleString('ru-RU');
+    return t.replace('-', '\u2212') + suffix;
+  }}
+  function countUp(el) {{
+    if (!el || el.dataset.done) return;
+    el.dataset.done = '1';
+    var target = parseFloat(el.dataset.num);
+    var dec = parseInt(el.dataset.dec, 10) || 0;
+    var suffix = el.dataset.suffix || '';
+    if (isNaN(target)) return;
+    var t0 = null, dur = 900;
+    function step(ts) {{
+      if (t0 === null) t0 = ts;
+      var k = Math.min(1, (ts - t0) / dur);
+      var eased = 1 - Math.pow(1 - k, 3);
+      el.textContent = fmt(target * eased, dec, suffix);
+      if (k < 1) requestAnimationFrame(step);
+      else el.textContent = fmt(target, dec, suffix);
+    }}
+    requestAnimationFrame(step);
+  }}
 }})();
 </script>
 </body>
