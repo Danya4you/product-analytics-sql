@@ -42,6 +42,32 @@ plan_changes AS (
     FROM app.subscription_events
     GROUP BY subscription_id
 ),
+normalised_reason AS (
+    -- Ответ из формы опроса приходит как попало: регистр, лишние пробелы,
+    -- пробелы вместо подчёркиваний, свободный текст по-русски. Приводим к
+    -- одному виду ЗДЕСЬ, иначе каждый отчёт нормализует по-своему и они
+    -- перестают сходиться.
+    SELECT
+        subscription_id,
+        CASE
+            WHEN btrim(coalesce(cancel_reason_raw, '')) = '' THEN NULL
+            ELSE CASE lower(regexp_replace(btrim(cancel_reason_raw), '\s+', '_', 'g'))
+                    WHEN 'дорого'               THEN 'too_expensive'
+                    WHEN 'нет_нужных_функций'   THEN 'missing_features'
+                    WHEN 'перешли_к_конкуренту' THEN 'switched_to_competitor'
+                    WHEN 'больше_не_нужно'      THEN 'no_longer_needed'
+                    WHEN 'другое'               THEN 'other'
+                    ELSE lower(regexp_replace(btrim(cancel_reason_raw), '\s+', '_', 'g'))
+                 END
+        END AS cancel_reason
+    FROM app.subscriptions
+),
+last_payment AS (
+    SELECT DISTINCT ON (subscription_id)
+        subscription_id, status
+    FROM app.payments
+    ORDER BY subscription_id, paid_at DESC, payment_id DESC
+),
 money AS (
     SELECT
         subscription_id,
@@ -58,7 +84,18 @@ SELECT
     s.user_id,
     s.status,
     s.seats,
-    s.cancel_reason,
+    s.cancel_reason_raw,
+    nr.cancel_reason,
+    -- Природа оттока важнее его причины. Пассивный отток — это не решение
+    -- клиента уйти, а сорвавшееся списание, и лечится он повторными попытками,
+    -- а не продуктом. Отличить одно от другого можно только по платежам:
+    -- формы отмены такой клиент не видел и причину не называл.
+    CASE
+        WHEN s.status <> 'churned'            THEN NULL
+        WHEN lp.status = 'failed'             THEN 'passive'
+        WHEN nr.cancel_reason IS NOT NULL     THEN 'voluntary_stated'
+        ELSE                                       'voluntary_silent'
+    END                                       AS churn_type,
 
     s.trial_started_at,
     s.trial_ended_at,
@@ -69,13 +106,13 @@ SELECT
     (s.status = 'active')                         AS is_active,
 
     pc.first_plan_id,
-    fp.plan_code                                  AS first_plan_code,
-    fp.plan_name                                  AS first_plan_name,
-    fp.billing_period                             AS first_billing_period,
+    fpl.plan_code                                 AS first_plan_code,
+    fpl.plan_name                                 AS first_plan_name,
+    fpl.billing_period                            AS first_billing_period,
     pc.first_mrr_rub,
 
     pl.last_plan_id,
-    lp.plan_code                                  AS last_plan_code,
+    lpl.plan_code                                 AS last_plan_code,
     CASE WHEN s.status = 'active' THEN pl.last_mrr_rub ELSE 0 END AS current_mrr_rub,
 
     coalesce(ch.upgrades, 0)                      AS upgrades,
@@ -103,8 +140,10 @@ LEFT JOIN plan_at_convert    pc USING (subscription_id)
 LEFT JOIN plan_last          pl USING (subscription_id)
 LEFT JOIN plan_changes       ch USING (subscription_id)
 LEFT JOIN money              m  USING (subscription_id)
-LEFT JOIN app.plans          fp ON fp.plan_id = pc.first_plan_id
-LEFT JOIN app.plans          lp ON lp.plan_id = pl.last_plan_id;
+LEFT JOIN normalised_reason  nr USING (subscription_id)
+LEFT JOIN last_payment       lp USING (subscription_id)
+LEFT JOIN app.plans          fpl ON fpl.plan_id = pc.first_plan_id
+LEFT JOIN app.plans          lpl ON lpl.plan_id = pl.last_plan_id;
 
 CREATE UNIQUE INDEX fct_subscription_pk       ON marts.fct_subscription (subscription_id);
 CREATE INDEX        fct_subscription_user_idx ON marts.fct_subscription (user_id);
@@ -114,5 +153,9 @@ COMMENT ON MATERIALIZED VIEW marts.fct_subscription IS
     'Подписка целиком: срок жизни платного периода, первый и текущий MRR, собранная выручка.';
 COMMENT ON COLUMN marts.fct_subscription.tenure_months IS
     'Длительность платного периода в средних месяцах (2 629 746 секунд). У активных считается до даты среза, поэтому это оценка снизу.';
+COMMENT ON COLUMN marts.fct_subscription.churn_type IS
+    'passive — сорвалось списание, клиент ничего не отменял; voluntary_stated — отменил и назвал причину; voluntary_silent — отменил и закрыл форму опроса.';
+COMMENT ON COLUMN marts.fct_subscription.cancel_reason IS
+    'Причина после нормализации. NULL у двух третей ушедших: пассивный отток причины не имеет, а опрос заполняет меньше половины остальных.';
 COMMENT ON COLUMN marts.fct_subscription.revenue_rub IS
     'Сумма успешных списаний минус возвраты. Неудачные попытки не учитываются.';

@@ -49,20 +49,50 @@ PLAN_BY_ID = {p[0]: p for p in PLANS}
 # (rank, billing_period) -> plan_id
 PLAN_BY_RANK = {(p[3], p[4]): p[0] for p in PLANS}
 
-# channel_id, code, name, group, cac_rub, доля трафика, множитель качества
+# channel_id, code, name, group, целевой CAC, доля трафика, множитель качества
+#
+# Целевой CAC в базу НЕ попадает: в жизни стоимость канала не лежит колонкой в
+# справочнике, а собирается из рекламных кабинетов суточными расходами. Здесь
+# он нужен только чтобы сгенерировать правдоподобную таблицу app.ad_spend.
+#
+# Каналы direct и unknown — не источники трафика, а результаты атрибуции:
+# «зашёл напрямую» и «определить не удалось». В витрине они первого класса,
+# потому что молча выкидывать неатрибуцированные регистрации нельзя.
 CHANNELS = [
-    (1, "organic_search",  "Органический поиск",   "organic",     0.00, 0.28, 1.00),
-    (2, "paid_search",     "Контекстная реклама",  "paid",     4200.00, 0.22, 0.86),
-    (3, "paid_social",     "Таргет в соцсетях",    "paid",     5100.00, 0.15, 0.61),
-    (4, "content",         "Блог и вебинары",      "organic",   850.00, 0.12, 1.14),
-    (5, "referral",        "Реферальная программа","referral",  300.00, 0.10, 1.46),
+    (1, "organic_search",  "Органический поиск",    "organic",     0.00, 0.28, 1.00),
+    (2, "paid_search",     "Контекстная реклама",   "paid",     4200.00, 0.22, 0.86),
+    (3, "paid_social",     "Таргет в соцсетях",     "paid",     5100.00, 0.15, 0.61),
+    (4, "content",         "Блог и вебинары",       "organic",   850.00, 0.12, 1.14),
+    (5, "referral",        "Реферальная программа", "referral",  300.00, 0.10, 1.46),
     (6, "partner",         "Партнёрские интеграции","referral", 2600.00, 0.07, 1.28),
-    (7, "email",           "Рассылка по базе",     "organic",   120.00, 0.06, 1.04),
-    # Внутренние аккаунты сотрудников. Доля трафика нулевая: они не приходят
-    # из маркетинга, их заводят вручную. В аналитике их надо исключать, и
-    # витрины это делают — см. sql/marts/02_stg_events.sql.
-    (8, "internal",        "Внутренние аккаунты",  "internal",   0.00, 0.00, 1.00),
+    (7, "email",           "Рассылка по базе",      "organic",   120.00, 0.06, 1.04),
+    (8, "direct",          "Прямой заход",          "direct",      0.00, 0.00, 1.00),
+    (9, "unknown",         "Не определён",          "unknown",     0.00, 0.00, 1.00),
 ]
+CHANNEL_BY_CODE = {c[1]: c for c in CHANNELS}
+
+# Кампании платных каналов: в рекламном кабинете расходы разложены по ним,
+# и это единственная гранулярность, на которой расход вообще можно сопоставить
+# с регистрациями.
+CAMPAIGNS = {
+    "paid_search": ["brand", "generic-taskmanager", "competitor", "retargeting"],
+    "paid_social": ["lookalike-smb", "interest-pm", "video-awareness"],
+    "partner":     ["integration-crm", "marketplace-listing"],
+}
+
+# Почтовые домены. Корпоративный домен — единственный способ отличить компанию
+# от частника, а служебные аккаунты сотрудников — по домену самой компании.
+FREE_MAIL = ["gmail.com", "mail.ru", "yandex.ru", "outlook.com", "icloud.com", "bk.ru"]
+CORP_WORDS = ["altair", "vektor", "sibinvest", "nordtech", "grandstroy", "medialine",
+              "profkom", "uraltrade", "logistpro", "finexpert", "agrosnab", "teplodom",
+              "citrus", "kvantum", "orbita", "poliplast", "rosmet", "sfera-it"]
+STAFF_DOMAIN = "timeline.ru"
+
+# Окно, в котором мобильный клиент слал task_create вместо task_created.
+# Ровно так выглядит разъехавшийся трекинг после релиза: метрика проседает,
+# продукт не менялся, а причина — переименованное событие.
+TRACKING_BUG_START = datetime(2026, 1, 15)
+TRACKING_BUG_END = datetime(2026, 2, 6)
 
 COUNTRIES = [("RU", 0.82), ("KZ", 0.07), ("BY", 0.06), ("UZ", 0.03), ("AM", 0.02)]
 
@@ -107,7 +137,12 @@ EXPERIMENTS = [
      "Если на странице тарифов по умолчанию выбран годовой период, вырастет доля годовых "
      "подписок и денежный поток, а конверсия в оплату не пострадает",
      "annual_share",
-     datetime(2026, 5, 10), datetime(2026, 6, 30)),
+     # Окно длиннее, чем у первого теста, намеренно: основная метрика здесь
+     # считается не от всех попавших в эксперимент, а только от оплативших,
+     # то есть от каждого пятого. Чтобы набрать ту же мощность, нужно
+     # примерно впятеро больше трафика — и это решение принимают ДО запуска,
+     # а не после того, как тест закончился «ничем».
+     datetime(2026, 4, 20), datetime(2026, 8, 25)),
 ]
 
 rng = random.Random(SEED)
@@ -123,6 +158,12 @@ dirt_rng = random.Random(SEED + 977)
 # Доля событий, продублированных ретраями трекера
 DUPLICATE_SHARE = 0.018
 INTERNAL_ACCOUNTS = 40
+# Доля пользователей, у которых ни одного маркетингового касания не сохранилось:
+# заблокированные куки, потерянные метки при редиректе, заход из мессенджера.
+LOST_ATTRIBUTION_SHARE = 0.22
+# Доля ушедших добровольно, кто ответил на опрос о причине
+SURVEY_RESPONSE_RATE = 0.45
+BOT_DEVICES = 60
 
 
 # --------------------------------------------------------------------------- #
@@ -196,6 +237,32 @@ def ingest_time(occurred: datetime) -> datetime:
     return min(occurred + lag, SNAPSHOT - timedelta(seconds=1))
 
 
+def survey_answer() -> str:
+    """Причина отмены в том виде, в каком она приходит из формы опроса.
+
+    Отвечает меньше половины ушедших — остальные закрывают окно. Ответы не
+    нормализованы: часть выбирает пункт списка, часть пишет руками, и в базу
+    падает то, что упало. Приводить это к единому виду — работа витрины, а не
+    аналитического запроса, иначе каждый отчёт нормализует по-своему.
+    """
+    if rng.random() > SURVEY_RESPONSE_RATE:
+        return ""
+    reason = pick([(r, w) for r, w in CANCEL_REASONS if r != "payment_failed"])
+    style = rng.random()
+    if style < 0.62:
+        return reason
+    if style < 0.74:
+        return reason.upper()
+    if style < 0.84:
+        return f"  {reason} "
+    if style < 0.93:
+        return reason.replace("_", " ")
+    return {"too_expensive": "дорого", "missing_features": "нет нужных функций",
+            "switched_to_competitor": "перешли к конкуренту",
+            "no_longer_needed": "больше не нужно",
+            "other": "другое"}.get(reason, reason)
+
+
 def mrr_of(plan_id: int) -> float:
     plan = PLAN_BY_ID[plan_id]
     return round(plan[5] / 12, 2) if plan[4] == "annual" else plan[5]
@@ -238,33 +305,132 @@ def signup_schedule(target_users: int):
 # --------------------------------------------------------------------------- #
 
 def generate(target_users: int):
-    users, subs, sub_events, payments, events, assignments = [], [], [], [], [], []
+    users, subs, sub_events, payments = [], [], [], []
+    events, assignments, touchpoints = [], [], []
 
-    ids = {"sub": 0, "sub_event": 0, "payment": 0, "event": 0}
+    ids = {"sub": 0, "sub_event": 0, "payment": 0, "event": 0,
+           "device": 0, "touchpoint": 0}
+    paid_signups = {}          # (день, канал) -> регистраций, для расчёта расходов
+    ad_spend = []
 
     def next_id(key):
         ids[key] += 1
         return ids[key]
 
-    def log_event(user_id, when, name, platform=None):
+    def new_device():
+        return f"d{next_id('device'):07d}"
+
+    def log_event(user, when, name, platform=None, device=None, anonymous=False):
+        """Событие в сыром логе.
+
+        Три вещи, которых не было в идеальной версии:
+          • устройство — по нему потом склеивают анонимные сессии с аккаунтом;
+          • user_id может быть пустым: до входа в аккаунт продукт не знает, кто это;
+          • в окне сломанного трекинга мобильные события приезжают под другим именем.
+        """
         if when >= SNAPSHOT:
             return
+        platform = platform or pick(PLATFORMS)
+        if device is None:
+            device = user["devices"][0] if len(user["devices"]) == 1 or rng.random() < 0.82                      else user["devices"][-1]
+        if (name == "task_created" and platform == "mobile"
+                and TRACKING_BUG_START <= when < TRACKING_BUG_END):
+            name = "task_create"
         eid = next_id("event")
-        events.append((eid, event_uid(eid, user_id), user_id, ts(when),
-                       ts(ingest_time(when)), name, platform or pick(PLATFORMS)))
+        uid = "" if anonymous else user["id"]
+        events.append((eid, event_uid(eid, user["id"]), device, uid, ts(when),
+                       ts(ingest_time(when)), name, platform))
 
     # ---- профиль пользователя -------------------------------------------- #
 
     def make_user(user_id, signed_up_at):
+        # Истинный канал существует, но в базу НЕ попадает: продукт его не знает.
+        # Всё, что остаётся аналитику, — следы касаний на устройствах.
         channel = pick([(c, c[5]) for c in CHANNELS if c[5] > 0])
         company_size = pick(COMPANY_SIZES)
-        # корпоративный домен почты тем вероятнее, чем крупнее компания
-        p_b2b = {"1": 0.12, "2-10": 0.38, "11-50": 0.62, "51-200": 0.78, "200+": 0.88}[company_size]
-        is_b2b = rng.random() < p_b2b
-        users.append((user_id, ts(signed_up_at), channel[0], pick(COUNTRIES),
-                      company_size, "true" if is_b2b else "false"))
-        return {"id": user_id, "signed_up_at": signed_up_at, "channel": channel,
-                "company_size": company_size, "is_b2b": is_b2b}
+        p_corp = {"1": 0.12, "2-10": 0.38, "11-50": 0.62,
+                  "51-200": 0.78, "200+": 0.88}[company_size]
+        if rng.random() < p_corp:
+            domain = f"{pick([(w, 1) for w in CORP_WORDS])}.ru"
+        else:
+            domain = pick([(d, 1) for d in FREE_MAIL])
+
+        devices = [new_device()]
+        if rng.random() < 0.18:                   # рабочий ноутбук плюс телефон
+            devices.append(new_device())
+
+        users.append((user_id, ts(signed_up_at), pick(COUNTRIES), company_size, domain))
+        if channel[1] in CAMPAIGNS:
+            key = (signed_up_at.date(), channel[1])
+            paid_signups[key] = paid_signups.get(key, 0) + 1
+        user = {"id": user_id, "signed_up_at": signed_up_at, "channel": channel,
+                "company_size": company_size, "is_b2b": domain not in FREE_MAIL,
+                "devices": devices}
+        make_touchpoints(user)
+
+        # Человек ходит по сайту до того, как завёл аккаунт. Продукт в этот
+        # момент знает только устройство, поэтому user_id у таких событий пуст.
+        for _ in range(rng.randrange(0, 4)):
+            when = signed_up_at - timedelta(hours=rng.uniform(0.1, 72))
+            log_event(user, when, pick([("page_view", 0.7), ("pricing_viewed", 0.3)]),
+                      device=devices[0], anonymous=True)
+        return user
+
+    # ---- маркетинговые касания до регистрации ----------------------------- #
+
+    def make_touchpoints(user):
+        """След, который канал оставляет в трекере до регистрации.
+
+        Касания привязаны к УСТРОЙСТВУ, а не к пользователю: в момент клика по
+        рекламе аккаунта ещё нет. Связать одно с другим — отдельная задача,
+        которую решает marts.stg_events.
+
+        У части пользователей не сохраняется ничего: куки заблокированы, метки
+        потерялись на редиректе, переход пришёл из мессенджера. Такие
+        регистрации навсегда останутся неатрибуцированными, и это не чинится
+        запросом — это свойство сбора данных.
+        """
+        if rng.random() < LOST_ATTRIBUTION_SHARE:
+            return
+
+        device = user["devices"][0]
+        signup = user["signed_up_at"]
+        true_channel = user["channel"]
+
+        # Путь до регистрации редко состоит из одного касания: человек увидел
+        # статью, потом рекламу, потом пришёл по ссылке от коллеги. Именно из-за
+        # этой цепочки модели атрибуции и расходятся — first touch назовёт
+        # начало цепочки, last non-direct click её конец.
+        for _ in range(rng.randrange(0, 5)):
+            when = signup - timedelta(days=rng.uniform(0.5, 45), hours=rng.uniform(0, 24))
+            if rng.random() < 0.38:
+                ch = CHANNEL_BY_CODE["direct"]
+            else:
+                ch = pick([(c, c[5]) for c in CHANNELS if c[5] > 0])
+            add_touchpoint(device, when, ch)
+
+        # Решающее касание — то, из которого человек и пришёл. Но в 8 % случаев
+        # именно оно и теряется: переход по рекламе прошёл через редирект,
+        # который срезал метки. Тогда модель атрибуции уверенно назовёт канал —
+        # и ошибётся, потому что назовёт соседнее касание. Проверить это по
+        # данным нельзя, поэтому в отчётах и нужна оговорка про модель.
+        if rng.random() >= 0.08:
+            add_touchpoint(device, signup - timedelta(hours=rng.uniform(0.05, 60)),
+                           true_channel)
+
+        # часть людей после этого ещё раз заходит напрямую, уже решившись
+        if rng.random() < 0.3:
+            add_touchpoint(device, signup - timedelta(minutes=rng.uniform(1, 240)),
+                           CHANNEL_BY_CODE["direct"])
+
+    def add_touchpoint(device, when, channel):
+        if when >= SNAPSHOT:
+            return
+        campaign = ""
+        if channel[1] in CAMPAIGNS:
+            campaign = pick([(c, 1) for c in CAMPAIGNS[channel[1]]])
+        touchpoints.append((next_id("touchpoint"), device, ts(when), channel[0],
+                            campaign, "true" if channel[1] == "direct" else "false"))
 
     # ---- назначение в эксперимент ---------------------------------------- #
 
@@ -291,27 +457,27 @@ def generate(target_users: int):
         """
         quality = user["channel"][6]
         t0 = user["signed_up_at"]
-        log_event(user["id"], t0, "signup", "web")
+        log_event(user, t0, "signup", "web")
 
         p_confirm = clip(0.88 * (0.94 + 0.06 * quality), 0, 0.97)
         if rng.random() > p_confirm:
             return {"confirmed": False, "onboarded": False, "project": False,
                     "tasks": 0, "activated": False}
-        log_event(user["id"], t0 + timedelta(minutes=rng.randrange(3, 220)), "email_confirmed", "web")
+        log_event(user, t0 + timedelta(minutes=rng.randrange(3, 220)), "email_confirmed", "web")
 
         p_onboarding = clip(0.60 * quality, 0.05, 0.95)
         if variants.get(1) == "treatment":
             p_onboarding = clip(p_onboarding * 1.20, 0.05, 0.95)   # заложенный эффект A/B №1
         onboarding_done = rng.random() < p_onboarding
         if onboarding_done:
-            log_event(user["id"], t0 + timedelta(hours=rng.uniform(0.2, 30)), "onboarding_completed", "web")
+            log_event(user, t0 + timedelta(hours=rng.uniform(0.2, 30)), "onboarding_completed", "web")
 
         p_project = 0.90 if onboarding_done else 0.33
         if rng.random() > p_project:
             return {"confirmed": True, "onboarded": onboarding_done, "project": False,
                     "tasks": 0, "activated": False}
         project_at = t0 + timedelta(hours=rng.uniform(0.3, 96 if onboarding_done else 140))
-        log_event(user["id"], project_at, "project_created", "web")
+        log_event(user, project_at, "project_created", "web")
 
         # Задачи первой недели. Окно жёстко ограничено седьмым днём от регистрации:
         # активация определяется именно на этом окне, и определение в SQL
@@ -325,12 +491,12 @@ def generate(target_users: int):
                 when = project_at + timedelta(seconds=rng.uniform(60, span))
             else:
                 when = project_at + timedelta(hours=rng.uniform(0.1, 72))
-            log_event(user["id"], when, "task_created")
+            log_event(user, when, "task_created")
 
         if user["is_b2b"] and rng.random() < 0.47:
-            log_event(user["id"], project_at + timedelta(hours=rng.uniform(1, 24 * 8)), "invite_sent", "web")
+            log_event(user, project_at + timedelta(hours=rng.uniform(1, 24 * 8)), "invite_sent", "web")
         if rng.random() < (0.22 if onboarding_done else 0.06):
-            log_event(user["id"], project_at + timedelta(hours=rng.uniform(2, 24 * 10)), "integration_connected", "api")
+            log_event(user, project_at + timedelta(hours=rng.uniform(2, 24 * 10)), "integration_connected", "api")
 
         activated = n_tasks >= 3 and project_at <= window_end
         return {"confirmed": True, "onboarded": onboarding_done, "project": True,
@@ -414,7 +580,10 @@ def generate(target_users: int):
                         if retry_at < SNAPSHOT:
                             payments.append((next_id("payment"), sub_id, ts(retry_at),
                                              f"{amount:.2f}", "failed", 2))
-                        ended_at, cancel_reason = retry_at, "payment_failed"
+                        # Пассивный отток: клиент ничего не отменял, просто не
+                        # прошло списание. Формы отмены он не видел, поэтому
+                        # причина остаётся пустой — как и в жизни.
+                        ended_at, cancel_reason = retry_at, ""
                         break
 
             next_cursor = add_months(cursor, step_months)
@@ -452,7 +621,7 @@ def generate(target_users: int):
 
             if rng.random() < hazard:
                 ended_at = next_cursor - timedelta(hours=rng.uniform(1, 40))
-                cancel_reason = pick([(r, w) for r, w in CANCEL_REASONS if r != "payment_failed"])
+                cancel_reason = survey_answer()
                 break
 
             sub_events.append((next_id("sub_event"), sub_id, ts(next_cursor), "renew",
@@ -495,7 +664,7 @@ def generate(target_users: int):
             for _ in range(n):
                 when = week + timedelta(days=rng.uniform(0, 7))
                 if when < finish:
-                    log_event(user["id"], when, pick(ACTIVITY_EVENTS))
+                    log_event(user, when, pick(ACTIVITY_EVENTS))
             week += timedelta(days=7)
 
     # во что превращается глубина воронки: множитель интенсивности на триале
@@ -552,44 +721,81 @@ def generate(target_users: int):
                         reactivation_queue.append((back_at, user))
                         reactivation_queue.sort(key=lambda x: x[0])
 
-    add_dirt(users, events, next_id)
+    make_ad_spend(ad_spend, paid_signups)
+    add_dirt(users, events, next_id, new_device)
 
     return {"users": users, "subscriptions": subs, "subscription_events": sub_events,
-            "payments": payments, "events": events, "experiment_assignments": assignments}
+            "payments": payments, "events": events, "experiment_assignments": assignments,
+            "touchpoints": touchpoints, "ad_spend": ad_spend}
+
+
+def make_ad_spend(ad_spend, paid_signups):
+    """Суточные расходы из рекламных кабинетов.
+
+    Так расход и приходит в хранилище: строка на день, канал и кампанию, без
+    всякой связи с конкретным пользователем. Связать его с регистрациями можно
+    только по дате и каналу — и вот тут вылезает главная проблема расчёта CAC:
+    расход известен точно, а регистрации атрибуцированы неполно.
+
+    Заложены две неприятности, которые есть в любом кабинете:
+      • расход идёт и в дни, когда регистраций из канала не было вовсе;
+      • он никогда не равен «число регистраций × целевой CAC» — ставки
+        плавают, аукцион меняется, часть кликов не доходит до сайта.
+    """
+    days = (SNAPSHOT.date() - START_DATE).days
+    for i in range(days):
+        day = START_DATE + timedelta(days=i)
+        for code, campaigns in CAMPAIGNS.items():
+            channel = CHANNEL_BY_CODE[code]
+            signups = paid_signups.get((day, code), 0)
+            # базовый расход есть всегда: реклама крутится и в выходные, когда
+            # никто не регистрируется
+            spend = (signups * channel[4] * rng.gauss(1.0, 0.22)
+                     + channel[4] * rng.uniform(0.05, 0.45))
+            if spend <= 0:
+                continue
+            weights = [rng.uniform(0.5, 1.5) for _ in campaigns]
+            total_w = sum(weights)
+            for campaign, w in zip(campaigns, weights):
+                part = spend * w / total_w
+                cpc = rng.uniform(18, 62)
+                clicks = max(1, int(part / cpc))
+                ad_spend.append((ts(datetime(day.year, day.month, day.day))[:10],
+                                 channel[0], campaign, f"{part:.2f}",
+                                 clicks, clicks * rng.randrange(8, 40)))
 
 
 # --------------------------------------------------------------------------- #
 # Дефекты данных
 # --------------------------------------------------------------------------- #
 
-def add_dirt(users, events, next_id):
+def add_dirt(users, events, next_id, new_device):
     """Добавляет в сырой слой то, что есть в любой реальной выгрузке.
 
-    Два дефекта, оба типовые:
+    Три дефекта, все типовые:
 
-      1. Служебные аккаунты сотрудников. Ничем не отличаются от обычных
-         пользователей, кроме канала привлечения. Если их не выкинуть, они
-         портят конверсию: в продукт заходят, а платить, естественно, не идут.
+      1. Служебные аккаунты сотрудников. Отличаются только доменом почты —
+         тем же, что у самой компании. Не выкинешь — занизишь конверсию.
 
-      2. Дубли от ретраев трекера. Клиент не получил подтверждения и отправил
-         событие повторно; в хранилище легли две строки с разными
-         идентификаторами и одинаковым идемпотентным ключом.
+      2. Трафик ботов и поисковых роботов. Устройства, которые ходят по сайту
+         и никогда не заводят аккаунт. Склейка их отбрасывает сама: связать
+         такое устройство не с кем.
 
-    Функция вызывается ПОСЛЕ основной генерации и пользуется отдельным потоком
-    случайных чисел, поэтому ничего в уже созданных данных не сдвигает.
+      3. Дубли от ретраев трекера: две строки, разные event_id, один event_uid.
+
+    Функция работает ПОСЛЕ основной генерации на отдельном потоке случайных
+    чисел, поэтому ничего в уже созданных данных не сдвигает.
     """
     # ---- служебные аккаунты ---------------------------------------------- #
     base_id = max(u[0] for u in users)
     for i in range(1, INTERNAL_ACCOUNTS + 1):
         uid = base_id + i
-        # не раньше сорокового дня наблюдения: иначе служебный аккаунт стал бы
-        # самой ранней регистрацией и сдвинул начало календаря в marts.dim_date
         day = START_DATE + timedelta(days=dirt_rng.randrange(40, 560))
         signed_up = datetime(day.year, day.month, day.day,
                              dirt_rng.randrange(9, 20), dirt_rng.randrange(60))
-        users.append((uid, ts(signed_up), 8, "RU", "11-50", "true"))
+        users.append((uid, ts(signed_up), "RU", "11-50", STAFF_DOMAIN))
+        device = new_device()
 
-        # сотрудники заходят проверять сборки: регистрация, пара действий, тишина
         script = [("signup", 0.0), ("email_confirmed", 0.2), ("project_created", 1.5)]
         script += [("task_created", 2.0 + j) for j in range(dirt_rng.randrange(0, 6))]
         for name, offset_h in script:
@@ -597,20 +803,32 @@ def add_dirt(users, events, next_id):
             if when >= SNAPSHOT:
                 continue
             eid = next_id("event")
-            events.append((eid, event_uid(eid, uid), uid, ts(when),
+            events.append((eid, event_uid(eid, uid), device, uid, ts(when),
                            ts(ingest_time(when)), name, "web"))
 
+    # ---- боты ------------------------------------------------------------- #
+    for _ in range(BOT_DEVICES):
+        device = new_device()
+        day = START_DATE + timedelta(days=dirt_rng.randrange(0, 600))
+        start_at = datetime(day.year, day.month, day.day, dirt_rng.randrange(24))
+        for j in range(dirt_rng.randrange(20, 140)):
+            # характерная примета робота: строго равные интервалы между заходами
+            when = start_at + timedelta(seconds=60 * j)
+            if when >= SNAPSHOT:
+                break
+            eid = next_id("event")
+            events.append((eid, f"bot-{eid:08x}", device, "", ts(when),
+                           ts(ingest_time(when)), "page_view", "web"))
+
     # ---- дубли от ретраев ------------------------------------------------- #
-    # Список фиксируется до вставки: иначе дубли начали бы дублировать дубли
-    # и распределение съехало бы в сторону нескольких «горячих» событий.
     originals = list(events)
     for _ in range(int(len(originals) * DUPLICATE_SHARE)):
         src = originals[dirt_rng.randrange(len(originals))]
-        arrived = datetime.strptime(src[4], "%Y-%m-%d %H:%M:%S")
+        arrived = datetime.strptime(src[5], "%Y-%m-%d %H:%M:%S")
         retry = min(arrived + timedelta(seconds=dirt_rng.uniform(2, 900)),
                     SNAPSHOT - timedelta(seconds=1))
-        # всё, кроме идентификатора строки и времени доставки, повторяется точь-в-точь
-        events.append((next_id("event"), src[1], src[2], src[3], ts(retry), src[5], src[6]))
+        events.append((next_id("event"), src[1], src[2], src[3], src[4],
+                       ts(retry), src[6], src[7]))
 
 
 # --------------------------------------------------------------------------- #
@@ -620,14 +838,17 @@ def add_dirt(users, events, next_id):
 HEADERS = {
     "plans": ["plan_id", "plan_code", "plan_name", "plan_rank", "billing_period",
               "price_rub", "seats_included"],
-    "channels": ["channel_id", "channel_code", "channel_name", "channel_group", "cac_rub"],
-    "users": ["user_id", "signed_up_at", "channel_id", "country_code", "company_size", "is_b2b"],
+    "channels": ["channel_id", "channel_code", "channel_name", "channel_group"],
+    "users": ["user_id", "signed_up_at", "country_code", "company_size", "email_domain"],
+    "touchpoints": ["touchpoint_id", "device_id", "occurred_at", "channel_id",
+                    "campaign", "is_direct"],
+    "ad_spend": ["spend_date", "channel_id", "campaign", "spend_rub", "clicks", "impressions"],
     "subscriptions": ["subscription_id", "user_id", "plan_id", "trial_started_at", "trial_ended_at",
-                      "started_at", "ended_at", "status", "cancel_reason", "seats"],
+                      "started_at", "ended_at", "status", "cancel_reason_raw", "seats"],
     "subscription_events": ["event_id", "subscription_id", "occurred_at", "event_type", "plan_id",
                             "mrr_before_rub", "mrr_after_rub"],
     "payments": ["payment_id", "subscription_id", "paid_at", "amount_rub", "status", "attempt_no"],
-    "events": ["event_id", "event_uid", "user_id", "occurred_at", "ingested_at",
+    "events": ["event_id", "event_uid", "device_id", "user_id", "occurred_at", "ingested_at",
                "event_name", "platform"],
     "experiments": ["experiment_id", "experiment_code", "experiment_name", "hypothesis",
                     "primary_metric", "started_at", "ended_at"],
@@ -654,12 +875,12 @@ def main():
     tables = generate(args.users)
 
     write_csv("plans", [(p[0], p[1], p[2], p[3], p[4], f"{p[5]:.2f}", p[6]) for p in PLANS])
-    write_csv("channels", [(c[0], c[1], c[2], c[3], f"{c[4]:.2f}") for c in CHANNELS])
+    write_csv("channels", [(c[0], c[1], c[2], c[3]) for c in CHANNELS])
     write_csv("experiments", [(e[0], e[1], e[2], e[3], e[4], ts(e[5]), ts(e[6])) for e in EXPERIMENTS])
 
     # порядок важен: справочники и users должны попасть в БД раньше ссылающихся таблиц
-    for name in ("users", "subscriptions", "subscription_events", "payments",
-                 "events", "experiment_assignments"):
+    for name in ("users", "touchpoints", "ad_spend", "subscriptions",
+                 "subscription_events", "payments", "events", "experiment_assignments"):
         _path, n = write_csv(name, tables[name])
         print(f"  {name:<24} {n:>8,} строк".replace(",", " "))
 

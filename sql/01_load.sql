@@ -22,13 +22,15 @@
 BEGIN;
 
 TRUNCATE app.experiment_assignments, app.experiments, app.events, app.payments,
-         app.subscription_events, app.subscriptions, app.users,
-         app.channels, app.plans
+         app.subscription_events, app.subscriptions, app.touchpoints,
+         app.ad_spend, app.users, app.channels, app.plans
     RESTART IDENTITY CASCADE;
 
 \copy app.plans        FROM 'data/plans.csv'        WITH (FORMAT csv, HEADER true, NULL '')
 \copy app.channels     FROM 'data/channels.csv'     WITH (FORMAT csv, HEADER true, NULL '')
 \copy app.users        FROM 'data/users.csv'        WITH (FORMAT csv, HEADER true, NULL '')
+\copy app.touchpoints  FROM 'data/touchpoints.csv'  WITH (FORMAT csv, HEADER true, NULL '')
+\copy app.ad_spend     FROM 'data/ad_spend.csv'     WITH (FORMAT csv, HEADER true, NULL '')
 \copy app.subscriptions FROM 'data/subscriptions.csv' WITH (FORMAT csv, HEADER true, NULL '')
 \copy app.subscription_events FROM 'data/subscription_events.csv' WITH (FORMAT csv, HEADER true, NULL '')
 \copy app.payments     FROM 'data/payments.csv'     WITH (FORMAT csv, HEADER true, NULL '')
@@ -40,7 +42,8 @@ COMMIT;
 
 -- Планировщику нужна свежая статистика: без ANALYZE первые же оконные запросы
 -- по app.events уходят в seq scan на 400 тысячах строк.
-ANALYZE app.users, app.subscriptions, app.subscription_events, app.payments, app.events;
+ANALYZE app.users, app.subscriptions, app.subscription_events, app.payments,
+        app.events, app.touchpoints, app.ad_spend;
 
 \echo ''
 \echo 'Загружено:'
@@ -49,5 +52,7 @@ UNION ALL SELECT 'subscriptions',       count(*) FROM app.subscriptions
 UNION ALL SELECT 'subscription_events', count(*) FROM app.subscription_events
 UNION ALL SELECT 'payments',            count(*) FROM app.payments
 UNION ALL SELECT 'events',              count(*) FROM app.events
+UNION ALL SELECT 'touchpoints',         count(*) FROM app.touchpoints
+UNION ALL SELECT 'ad_spend',            count(*) FROM app.ad_spend
 UNION ALL SELECT 'experiment_assignments', count(*) FROM app.experiment_assignments
 ORDER BY 1;

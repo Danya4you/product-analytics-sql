@@ -166,23 +166,38 @@ GROUP BY a.week_index ORDER BY a.week_index
 """
 
 Q_CHANNELS = """
-WITH cu AS (
-    SELECT channel_name, max(cac_rub) AS cac, count(*) AS signups,
+WITH spend AS (
+    SELECT c.channel_code, sum(s.spend_rub) AS spend_rub
+    FROM app.ad_spend s JOIN app.channels c USING (channel_id)
+    GROUP BY c.channel_code
+),
+cu AS (
+    SELECT channel_code, channel_name, count(*) AS signups,
            count(*) FILTER (WHERE is_converted) AS paying
-    FROM marts.dim_user WHERE is_matured GROUP BY channel_name
+    FROM marts.dim_user WHERE is_matured GROUP BY channel_code, channel_name
 ),
 cs AS (
-    SELECT u.channel_name, avg(s.first_mrr_rub) AS arpu,
+    SELECT u.channel_code, avg(s.first_mrr_rub) AS arpu,
            count(*) FILTER (WHERE NOT s.is_active) / nullif(sum(s.tenure_months), 0) AS churn
     FROM marts.fct_subscription s JOIN marts.dim_user u USING (user_id)
-    WHERE s.is_converted AND u.is_matured GROUP BY u.channel_name
+    WHERE s.is_converted AND u.is_matured GROUP BY u.channel_code
 )
 SELECT cu.channel_name AS label,
        round(100.0 * cu.paying / cu.signups, 1) AS conversion,
        round(cs.arpu * 0.8 / nullif(cs.churn, 0)
-             / nullif(cu.cac * cu.signups / nullif(cu.paying, 0), 0), 2) AS ltv_cac
-FROM cu JOIN cs USING (channel_name)
+             / nullif(sp.spend_rub / nullif(cu.paying, 0), 0), 2) AS ltv_cac
+FROM cu
+JOIN cs USING (channel_code)
+JOIN spend sp USING (channel_code)
 ORDER BY ltv_cac DESC NULLS FIRST
+"""
+
+Q_ATTRIBUTION = """
+SELECT attribution_quality AS label, count(*) AS users,
+       round(100.0 * count(*) / sum(count(*)) OVER (), 1) AS share
+FROM marts.dim_user
+GROUP BY attribution_quality
+ORDER BY count(*) DESC
 """
 
 
@@ -341,6 +356,31 @@ def chart_funnel(rows, palette) -> str:
             s.append(f'<text class="drop-label" x="{L - 14}" y="{y - 2:.0f}" '
                      f'text-anchor="end">−{esc(spaced(drop))}</text>')
         prev = v
+    s.append("</svg>")
+    return "\n".join(s)
+
+
+def chart_attribution(rows, palette) -> str:
+    """Качество атрибуции — порядковая шкала, поэтому один оттенок с градацией."""
+    W = 820
+    row_h, gap = 40, 10
+    H = len(rows) * (row_h + gap) + 12
+    L = 230
+    top = max(float(r["users"]) for r in rows)
+    s = svg_open(W, H, "Качество атрибуции регистраций")
+    for i, r in enumerate(rows):
+        v = float(r["users"])
+        y = 6 + i * (row_h + gap)
+        w = (W - L - 150) * v / top
+        s.append(f'<text class="row-label" x="{L - 14}" y="{y + row_h / 2 + 5:.0f}" '
+                 f'text-anchor="end">{esc(r["label"])}</text>')
+        s.append(f'<rect class="funnel-bar hit" x="{L}" y="{y}" width="{max(w, 3):.1f}" '
+                 f'height="{row_h}" rx="4" fill="{palette["ramp"][min(i, 4)]}" '
+                 f'data-tip="{esc(r["label"])} — {esc(spaced(v))} регистраций, '
+                 f'{esc(r["share"])}%"/>')
+        shown = str(r["share"]).replace(".", ",")
+        s.append(f'<text class="value-label" x="{L + max(w, 3) + 12:.1f}" '
+                 f'y="{y + row_h / 2 + 5:.0f}">{esc(spaced(v))}  ·  {esc(shown)}%</text>')
     s.append("</svg>")
     return "\n".join(s)
 
@@ -529,6 +569,7 @@ def build(psql: str) -> str:
     funnel = query(psql, Q_FUNNEL)
     retention = query(psql, Q_RETENTION)
     channels = query(psql, Q_CHANNELS)
+    attribution = query(psql, Q_ATTRIBUTION)
 
     top = float(funnel[0]["users"])
     paid = float(funnel[-1]["users"])
@@ -576,6 +617,18 @@ def build(psql: str) -> str:
                    for r in funnel]),
         ),
         figure(
+            "Качество атрибуции",
+            "У скольких регистраций удалось восстановить канал привлечения",
+            chart_attribution(attribution, LIGHT),
+            "Канала в базе нет — он выводится из маркетинговых касаний на "
+            "устройстве. У части регистраций касаний не сохранилось: "
+            "заблокированы куки, потерялись метки при редиректе. Такие "
+            "регистрации нельзя ни выбросить, ни приписать к прямым — все доли "
+            "каналов ниже считаются с учётом этой дыры.",
+            table(["Качество", "Регистраций", "Доля, %"],
+                  [(r["label"], spaced(r["users"]), r["share"]) for r in attribution]),
+        ),
+        figure(
             "Удержание по неделям жизни",
             "Доля когорты, совершившей целевое действие: создание проекта, создание или закрытие задачи",
             chart_retention(retention),
@@ -585,14 +638,14 @@ def build(psql: str) -> str:
                   [(f'Н{r["label"]}', r["activated"], r["other"]) for r in retention]),
         ),
         figure(
-            "Окупаемость каналов",
-            "Отношение модельной LTV к стоимости привлечения платящего клиента",
+            "Окупаемость платных каналов",
+            "Отношение модельной LTV к стоимости привлечения платящего. Только каналы, по которым есть расход из рекламных кабинетов",
             chart_channels(channels),
             (f'Убыточны: {esc(", ".join(losing))}. ' if losing else "")
-            + "Значения выше 10 читать нельзя: органическим каналам присвоен "
-            "нулевой CAC, а модельная LTV раздута допущением о постоянном оттоке. "
-            "Осмысленны только сравнение каналов между собой и знак относительно "
-            'единицы — подробности в <a href="../docs/metrics.md">словаре метрик</a>.',
+            + "Органика и рефералка сюда не попадают: затраты на них существуют, "
+            "но в данных их нет, а деление на ноль дало бы бесконечную окупаемость. "
+            "LTV модельная и завышена допущением о постоянном оттоке — "
+            'подробности в <a href="../docs/metrics.md">словаре метрик</a>.',
             table(["Канал", "LTV/CAC", "Конверсия, %"],
                   [(r["label"], r["ltv_cac"], r["conversion"]) for r in channels]),
         ),

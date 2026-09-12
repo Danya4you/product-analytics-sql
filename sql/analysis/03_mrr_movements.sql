@@ -72,12 +72,21 @@ ORDER BY quarter;
 
 \echo ''
 \echo '=== 3.3 Из чего складывается отток MRR ==='
--- Причины отмены проставляет биллинг. Отдельно интересен payment_failed:
--- это не решение клиента уйти, а сорвавшееся списание, и лечится оно
--- не продуктом, а повторными попытками оплаты.
+-- Причину отмены знают НЕ ПРО ВСЕХ, и это главное, что надо сказать про эту
+-- таблицу. Пассивный отток причины не имеет вовсе: списание не прошло, клиент
+-- ничего не отменял и формы опроса не видел. Из оставшихся форму заполняет
+-- меньше половины.
+--
+-- Поэтому разбор идёт в два шага. Сначала природа оттока — она известна про
+-- каждую подписку, потому что выводится из платежей. И только потом причины,
+-- с явным указанием, от какой доли считается процент.
 
 SELECT
-    coalesce(s.cancel_reason, 'не указана')                        AS "Причина",
+    CASE s.churn_type
+        WHEN 'passive'          THEN 'Не прошло списание'
+        WHEN 'voluntary_stated' THEN 'Отменил, назвал причину'
+        WHEN 'voluntary_silent' THEN 'Отменил, причину не назвал'
+    END                                                            AS "Природа оттока",
     count(*)                                                       AS "Подписок",
     round(100.0 * count(*) / sum(count(*)) OVER (), 1)             AS "Доля, %",
     round(sum(abs(m.mrr_delta_rub)))                               AS "Потерянный MRR, ₽",
@@ -86,8 +95,34 @@ SELECT
 FROM marts.fct_mrr_movement m
 JOIN marts.fct_subscription s USING (subscription_id)
 WHERE m.movement_type = 'churn'
-GROUP BY s.cancel_reason
+GROUP BY s.churn_type
 ORDER BY sum(abs(m.mrr_delta_rub)) DESC;
+
+\echo ''
+\echo '=== 3.3b Названные причины — от тех, кто ответил ==='
+-- Знаменатель здесь — только ответившие на опрос, и переносить эти доли на
+-- весь отток нельзя. Отвечают не случайные люди: тот, кто ушёл из-за цены,
+-- охотнее объясняется, чем тот, кому продукт просто надоел. Смещение выборки
+-- измерить нечем, поэтому таблица читается как «о чём говорят ушедшие», а не
+-- «почему уходят».
+
+WITH stated AS (
+    SELECT s.cancel_reason, s.tenure_months, s.revenue_rub, m.mrr_delta_rub
+    FROM marts.fct_mrr_movement m
+    JOIN marts.fct_subscription s USING (subscription_id)
+    WHERE m.movement_type = 'churn' AND s.cancel_reason IS NOT NULL
+)
+SELECT
+    cancel_reason                                            AS "Причина",
+    count(*)                                                 AS "Подписок",
+    round(100.0 * count(*) / sum(count(*)) OVER (), 1)       AS "Доля ответивших, %",
+    round(100.0 * count(*) / (SELECT count(*) FROM marts.fct_subscription
+                               WHERE status = 'churned'), 1) AS "Доля всего оттока, %",
+    round(sum(abs(mrr_delta_rub)))                           AS "Потерянный MRR, ₽",
+    round(avg(tenure_months), 1)                             AS "Прожили, мес"
+FROM stated
+GROUP BY cancel_reason
+ORDER BY count(*) DESC;
 
 \echo ''
 \echo '=== 3.4 Сверка: водопад против независимого среза ==='

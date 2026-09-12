@@ -13,8 +13,8 @@
  Subquery Scan on u (actual rows=200 loops=1)
    ->  Limit (actual rows=200 loops=1)
          ->  Index Scan using users_pkey on users (actual rows=200 loops=1)
- Planning Time: 2.885 ms
- Execution Time: 10462.331 ms
+ Planning Time: 3.556 ms
+ Execution Time: 15102.279 ms
 (5 ñòðîê)
 
 
@@ -24,8 +24,8 @@
  Subquery Scan on u (actual rows=200 loops=1)
    ->  Limit (actual rows=200 loops=1)
          ->  Index Scan using users_pkey on users (actual rows=200 loops=1)
- Planning Time: 0.297 ms
- Execution Time: 2.480 ms
+ Planning Time: 0.182 ms
+ Execution Time: 1.419 ms
 (5 ñòðîê)
 
 
@@ -41,44 +41,44 @@
 --- Ð½Ð°Ð¸Ð²Ð½Ñ‹Ð¹: Ð¿Ð¾Ð´Ð·Ð°Ð¿Ñ€Ð¾Ñ Ð½Ð° ÐºÐ°Ð¶Ð´Ð¾Ð¹ ÑÑ‚Ñ€Ð¾ÐºÐµ ---
                                                              QUERY PLAN                                                              
 -------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate (actual rows=12 loops=1)
+ GroupAggregate (actual rows=14 loops=1)
    Group Key: e.event_name
-   ->  Sort (actual rows=37936 loops=1)
+   ->  Sort (actual rows=40971 loops=1)
          Sort Key: e.event_name
-         Sort Method: quicksort  Memory: 3016kB
-         ->  Nested Loop (actual rows=37936 loops=1)
-               ->  Index Scan using stg_events_user_time_idx on stg_events e (actual rows=37936 loops=1)
+         Sort Method: quicksort  Memory: 3135kB
+         ->  Nested Loop (actual rows=40971 loops=1)
+               ->  Index Scan using stg_events_user_time_idx on stg_events e (actual rows=40971 loops=1)
                      Index Cond: (occurred_at > (marts.snapshot_ts() - '30 days'::interval))
-               ->  Memoize (actual rows=1 loops=37936)
+               ->  Memoize (actual rows=1 loops=40971)
                      Cache Key: e.user_id, e.event_name
                      Cache Mode: binary
-                     Hits: 25522  Misses: 12414  Evictions: 0  Overflows: 0  Memory Usage: 1480kB
-                     ->  Aggregate (actual rows=1 loops=12414)
-                           ->  Index Scan using stg_events_user_time_idx on stg_events x (actual rows=3 loops=12414)
+                     Hits: 27485  Misses: 13486  Evictions: 0  Overflows: 0  Memory Usage: 1607kB
+                     ->  Aggregate (actual rows=1 loops=13486)
+                           ->  Index Scan using stg_events_user_time_idx on stg_events x (actual rows=3 loops=13486)
                                  Index Cond: ((user_id = e.user_id) AND (occurred_at > (marts.snapshot_ts() - '30 days'::interval)))
                                  Filter: (event_name = e.event_name)
                                  Rows Removed by Filter: 16
- Planning Time: 5.697 ms
- Execution Time: 410.298 ms
+ Planning Time: 3.923 ms
+ Execution Time: 416.926 ms
 (19 ñòðîê)
 
 
 --- Ð¸Ð· Ñ€ÐµÐ¿Ð¾Ð·Ð¸Ñ‚Ð¾Ñ€Ð¸Ñ: ÑÐ½Ð°Ñ‡Ð°Ð»Ð° ÑÐ²Ñ‘Ñ€Ñ‚ÐºÐ°, Ð¿Ð¾Ñ‚Ð¾Ð¼ Ð¼ÐµÐ´Ð¸Ð°Ð½Ð° ---
                                                  QUERY PLAN                                                  
 -------------------------------------------------------------------------------------------------------------
- GroupAggregate (actual rows=12 loops=1)
+ GroupAggregate (actual rows=14 loops=1)
    Group Key: per_user.event_name
-   ->  Sort (actual rows=12414 loops=1)
+   ->  Sort (actual rows=13486 loops=1)
          Sort Key: per_user.event_name
-         Sort Method: quicksort  Memory: 867kB
-         ->  Subquery Scan on per_user (actual rows=12414 loops=1)
-               ->  HashAggregate (actual rows=12414 loops=1)
+         Sort Method: quicksort  Memory: 909kB
+         ->  Subquery Scan on per_user (actual rows=13486 loops=1)
+               ->  HashAggregate (actual rows=13486 loops=1)
                      Group Key: stg_events.user_id, stg_events.event_name
                      Batches: 1  Memory Usage: 2065kB
-                     ->  Index Scan using stg_events_user_time_idx on stg_events (actual rows=37936 loops=1)
+                     ->  Index Scan using stg_events_user_time_idx on stg_events (actual rows=40971 loops=1)
                            Index Cond: (occurred_at > (marts.snapshot_ts() - '30 days'::interval))
- Planning Time: 0.255 ms
- Execution Time: 57.526 ms
+ Planning Time: 1.065 ms
+ Execution Time: 74.544 ms
 (13 ñòðîê)
 
 
@@ -94,10 +94,10 @@
                                                   QUERY PLAN                                                   
 ---------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
-   ->  Index Scan using stg_events_user_time_idx on stg_events (actual rows=4 loops=1)
+   ->  Index Scan using stg_events_user_time_idx on stg_events (actual rows=14 loops=1)
          Index Cond: ((user_id = 4242) AND (occurred_at < '2026-01-01 00:00:00'::timestamp without time zone))
- Planning Time: 0.128 ms
- Execution Time: 0.066 ms
+ Planning Time: 0.153 ms
+ Execution Time: 0.079 ms
 (5 ñòðîê)
 
 
@@ -107,16 +107,16 @@
  HashAggregate (actual rows=12039 loops=1)
    Group Key: u.user_id
    Batches: 1  Memory Usage: 1169kB
-   ->  Hash Right Join (actual rows=68730 loops=1)
+   ->  Hash Right Join (actual rows=86234 loops=1)
          Hash Cond: (e.user_id = u.user_id)
          Join Filter: (e.occurred_at < (u.signed_up_at + '7 days'::interval))
-         Rows Removed by Join Filter: 363242
-         ->  Seq Scan on stg_events e (actual rows=431932 loops=1)
+         Rows Removed by Join Filter: 372434
+         ->  Seq Scan on stg_events e (actual rows=458628 loops=1)
          ->  Hash (actual rows=12039 loops=1)
                Buckets: 16384  Batches: 1  Memory Usage: 693kB
                ->  Seq Scan on users u (actual rows=12039 loops=1)
- Planning Time: 0.482 ms
- Execution Time: 268.992 ms
+ Planning Time: 9.103 ms
+ Execution Time: 384.234 ms
 (13 ñòðîê)
 
 
@@ -127,16 +127,16 @@
  HashAggregate (actual rows=12039 loops=1)
    Group Key: u.user_id
    Batches: 1  Memory Usage: 1169kB
-   ->  Hash Right Join (actual rows=68730 loops=1)
+   ->  Hash Right Join (actual rows=86234 loops=1)
          Hash Cond: (e.user_id = u.user_id)
          Join Filter: (e.occurred_at < (u.signed_up_at + '7 days'::interval))
-         Rows Removed by Join Filter: 363242
-         ->  Seq Scan on stg_events e (actual rows=431932 loops=1)
+         Rows Removed by Join Filter: 372434
+         ->  Seq Scan on stg_events e (actual rows=458628 loops=1)
          ->  Hash (actual rows=12039 loops=1)
                Buckets: 16384  Batches: 1  Memory Usage: 693kB
                ->  Seq Scan on users u (actual rows=12039 loops=1)
- Planning Time: 0.190 ms
- Execution Time: 235.075 ms
+ Planning Time: 0.261 ms
+ Execution Time: 408.566 ms
 (13 ñòðîê)
 
 

@@ -134,12 +134,11 @@ WITH checks AS (
                            AS recomputed,
                        max(d.is_activated::int)::boolean AS from_mart
                   FROM app.users u
-                  JOIN app.channels c USING (channel_id)
                   JOIN marts.dim_user d ON d.user_id = u.user_id
                   LEFT JOIN marts.stg_events e
                          ON e.user_id = u.user_id
                         AND e.occurred_at < u.signed_up_at + interval '7 days'
-                 WHERE c.channel_code <> 'internal'
+                 WHERE u.email_domain <> 'timeline.ru'
                  GROUP BY u.user_id
             ) x WHERE recomputed IS DISTINCT FROM from_mart),
            'расхождений витрины с логом'
@@ -168,21 +167,64 @@ WITH checks AS (
            (SELECT count(*)
               FROM marts.dim_user d
               JOIN app.users u USING (user_id)
-              JOIN app.channels c USING (channel_id)
-             WHERE c.channel_code = 'internal'),
+             WHERE u.email_domain = 'timeline.ru'),
            'служебных аккаунтов в dim_user'
 
-    -- 18. Чистка снимает ровно дубли и служебные события, не задевая остального
+    -- 18. Чистка снимает ровно ожидаемое: дубли, боты и служебные аккаунты
     UNION ALL
     SELECT '18 Чистка убрала ровно ожидаемое число строк',
            (SELECT CASE WHEN (SELECT count(*) FROM marts.stg_events)
                            = (SELECT count(DISTINCT e.event_uid)
                                 FROM app.events e
-                                JOIN app.users u USING (user_id)
-                                JOIN app.channels c USING (channel_id)
-                               WHERE c.channel_code <> 'internal')
+                                JOIN marts.stg_identity i ON i.device_id = e.device_id
+                                JOIN app.users u ON u.user_id = coalesce(e.user_id, i.user_id)
+                               WHERE u.email_domain <> 'timeline.ru')
                         THEN 0 ELSE 1 END),
            'расхождение объёма после чистки'
+
+    -- 19. Склейка не приписала устройство чужому пользователю: у каждого
+    --     события с проставленным user_id владелец устройства должен совпадать
+    UNION ALL
+    SELECT '19 Склейка не противоречит явному user_id',
+           (SELECT count(*)
+              FROM app.events e
+              JOIN marts.stg_identity i ON i.device_id = e.device_id
+             WHERE e.user_id IS NOT NULL
+               AND e.user_id <> i.user_id
+               AND NOT i.device_shared),
+           'конфликтов устройства и аккаунта'
+
+    -- 20. Каждый клиентский аккаунт получил решение по атрибуции — пусть даже
+    --     «не определён». Пропуск строки означал бы, что пользователь молча
+    --     выпал из всех отчётов по каналам.
+    UNION ALL
+    SELECT '20 Атрибуция посчитана для каждого аккаунта',
+           (SELECT count(*) FROM marts.dim_user WHERE channel_code IS NULL),
+           'аккаунтов без решения по каналу'
+
+    -- 21. Переименованное событие приведено к общему имени: после окна
+    --     сломанного трекинга в чистом логе не должно остаться task_create
+    UNION ALL
+    SELECT '21 Переименованное событие склеено',
+           (SELECT count(*) FROM marts.stg_events WHERE event_name = 'task_create'),
+           'событий со старым именем'
+
+    -- 22. Доля неатрибуцированных регистраций в разумных пределах. Не тест
+    --     данных, а сигнализация: если атрибуция вдруг развалится и unknown
+    --     станет половиной, все отчёты по каналам надо снимать с публикации.
+    UNION ALL
+    SELECT '22 Доля регистраций без канала ниже 40%',
+           (SELECT CASE WHEN avg(CASE WHEN channel_code = 'unknown' THEN 1.0 ELSE 0 END) < 0.40
+                        THEN 0 ELSE 1 END FROM marts.dim_user),
+           'выход за допустимую долю'
+
+    -- 23. Расходы из кабинетов не приписаны каналам, которых не бывает платными
+    UNION ALL
+    SELECT '23 Расходы только по платным и партнёрским каналам',
+           (SELECT count(*) FROM app.ad_spend s
+              JOIN app.channels c USING (channel_id)
+             WHERE c.channel_group NOT IN ('paid','referral')),
+           'строк расхода по бесплатным каналам'
 
     -- 13. Распределение по вариантам A/B близко к 50/50 (проверка на SRM)
     --     Допуск 4 процентных пункта: при тысяче наблюдений в группе случайное

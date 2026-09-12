@@ -35,16 +35,57 @@ COMMENT ON COLUMN app.plans.plan_rank IS 'Ранг тарифа: классиф�
 
 CREATE TABLE app.channels (
     channel_id      smallint PRIMARY KEY,
-    channel_code    text          NOT NULL UNIQUE,
-    channel_name    text          NOT NULL,
-    channel_group   text          NOT NULL,      -- paid | organic | referral
-    cac_rub         numeric(10,2) NOT NULL,      -- стоимость привлечения одной регистрации
+    channel_code    text     NOT NULL UNIQUE,
+    channel_name    text     NOT NULL,
+    channel_group   text     NOT NULL,      -- paid | organic | referral | direct | unknown
     CONSTRAINT channels_group_chk
-        CHECK (channel_group IN ('paid','organic','referral','internal'))
+        CHECK (channel_group IN ('paid','organic','referral','direct','unknown'))
 );
 
-COMMENT ON COLUMN app.channels.cac_rub IS
-    'Стоимость привлечения одной РЕГИСТРАЦИИ (не платящего клиента). Плановая ставка из маркетинга.';
+COMMENT ON TABLE app.channels IS
+    'Справочник каналов. direct и unknown — не источники трафика, а исходы атрибуции: «зашёл напрямую» и «определить не удалось».';
+
+-- Стоимости привлечения здесь НЕТ намеренно. В жизни она не лежит колонкой в
+-- справочнике: расходы приходят из рекламных кабинетов суточными строками по
+-- кампаниям (app.ad_spend), и сопоставить их с регистрациями можно только по
+-- дате и каналу. Колонка cac_rub в справочнике — признак того, что кто-то уже
+-- принял за аналитика несколько решений и не сказал каких.
+
+CREATE TABLE app.ad_spend (
+    spend_date   date     NOT NULL,
+    channel_id   smallint NOT NULL REFERENCES app.channels(channel_id),
+    campaign     text     NOT NULL,
+    spend_rub    numeric(12,2) NOT NULL,
+    clicks       integer  NOT NULL,
+    impressions  bigint   NOT NULL,
+    PRIMARY KEY (spend_date, channel_id, campaign),
+    CONSTRAINT ad_spend_positive_chk CHECK (spend_rub >= 0 AND clicks >= 0)
+);
+
+CREATE INDEX ad_spend_channel_idx ON app.ad_spend (channel_id, spend_date);
+
+COMMENT ON TABLE app.ad_spend IS
+    'Суточные расходы из рекламных кабинетов. Гранулярность — день × канал × кампания; связи с конкретным пользователем нет и быть не может.';
+
+-- -----------------------------------------------------------------------------
+-- Маркетинговые касания
+-- -----------------------------------------------------------------------------
+
+CREATE TABLE app.touchpoints (
+    touchpoint_id bigint    PRIMARY KEY,
+    device_id     text      NOT NULL,
+    occurred_at   timestamp NOT NULL,
+    channel_id    smallint  NOT NULL REFERENCES app.channels(channel_id),
+    campaign      text,
+    is_direct     boolean   NOT NULL
+);
+
+CREATE INDEX touchpoints_device_idx ON app.touchpoints (device_id, occurred_at);
+
+COMMENT ON TABLE app.touchpoints IS
+    'Касания до регистрации. Привязаны к УСТРОЙСТВУ, а не к пользователю: в момент клика по рекламе аккаунта ещё нет. Связывание — задача marts.stg_events.';
+COMMENT ON COLUMN app.touchpoints.is_direct IS
+    'Прямой заход без источника. В моделях атрибуции такие касания обычно пропускают: они не объясняют, откуда человек узнал о продукте.';
 
 -- -----------------------------------------------------------------------------
 -- Пользователи
@@ -53,16 +94,20 @@ COMMENT ON COLUMN app.channels.cac_rub IS
 CREATE TABLE app.users (
     user_id       integer   PRIMARY KEY,
     signed_up_at  timestamp NOT NULL,
-    channel_id    smallint  NOT NULL REFERENCES app.channels(channel_id),
     country_code  char(2)   NOT NULL,
-    company_size  text      NOT NULL,            -- 1 | 2-10 | 11-50 | 51-200 | 200+
-    is_b2b        boolean   NOT NULL,            -- регистрация с корпоративного домена
+    company_size  text      NOT NULL,       -- 1 | 2-10 | 11-50 | 51-200 | 200+
+    email_domain  text      NOT NULL,
     CONSTRAINT users_company_size_chk
         CHECK (company_size IN ('1','2-10','11-50','51-200','200+'))
 );
 
+COMMENT ON TABLE app.users IS
+    'Зарегистрированные аккаунты. Канала привлечения здесь НЕТ: продукт его не знает, он восстанавливается из касаний.';
+COMMENT ON COLUMN app.users.email_domain IS
+    'Домен почты. Единственный признак, по которому отличают компанию от частника и находят служебные аккаунты сотрудников (домен самой компании).';
+
 CREATE INDEX users_signed_up_at_idx ON app.users (signed_up_at);
-CREATE INDEX users_channel_id_idx   ON app.users (channel_id);
+CREATE INDEX users_email_domain_idx ON app.users (email_domain);
 
 -- -----------------------------------------------------------------------------
 -- Подписки и их события
@@ -77,7 +122,7 @@ CREATE TABLE app.subscriptions (
     started_at        timestamp,                 -- NULL = до платного периода не дошли
     ended_at          timestamp,                 -- NULL = активна на дату среза
     status            text      NOT NULL,        -- trial | trial_expired | active | churned
-    cancel_reason     text,
+    cancel_reason_raw text,           -- ответ на опрос: чаще всего пустой
     seats             smallint  NOT NULL DEFAULT 1,
     CONSTRAINT subs_status_chk
         CHECK (status IN ('trial','trial_expired','active','churned')),
@@ -93,6 +138,8 @@ CREATE INDEX subs_started_at_idx ON app.subscriptions (started_at);
 
 COMMENT ON TABLE app.subscriptions IS
     'Одна строка — одна подписка. После оттока пользователь может завести вторую (реактивация).';
+COMMENT ON COLUMN app.subscriptions.cancel_reason_raw IS
+    'Сырой ответ из формы опроса при отмене. Пустой у пассивного оттока (никто ничего не отменял, просто не прошло списание) и у тех, кто закрыл форму. Регистр и формулировки не нормализованы.';
 COMMENT ON COLUMN app.subscriptions.plan_id IS
     'ТЕКУЩИЙ тариф. История переходов — в subscription_events, поэтому MRR по этому полю не считают.';
 
@@ -143,7 +190,8 @@ COMMENT ON COLUMN app.payments.amount_rub IS
 CREATE TABLE app.events (
     event_id     bigint    PRIMARY KEY,
     event_uid    text      NOT NULL,             -- идемпотентный ключ от клиента
-    user_id      integer   NOT NULL REFERENCES app.users(user_id),
+    device_id    text      NOT NULL,             -- известен всегда, ещё до входа
+    user_id      integer   REFERENCES app.users(user_id),  -- NULL до входа в аккаунт
     occurred_at  timestamp NOT NULL,             -- когда действие произошло
     ingested_at  timestamp NOT NULL,             -- когда строка доехала до хранилища
     event_name   text      NOT NULL,
@@ -154,10 +202,13 @@ CREATE TABLE app.events (
 CREATE INDEX events_user_time_idx ON app.events (user_id, occurred_at);
 CREATE INDEX events_name_time_idx ON app.events (event_name, occurred_at);
 CREATE INDEX events_uid_idx       ON app.events (event_uid);
+CREATE INDEX events_device_idx    ON app.events (device_id, occurred_at);
 CREATE INDEX events_ingested_idx  ON app.events (ingested_at);
 
 COMMENT ON TABLE app.events IS
     'Сырой лог продуктовых событий. Одна строка — одна ДОСТАВЛЕННАЯ запись, а не одно действие: ретраи трекера кладут дубли. Чистая версия — marts.stg_events.';
+COMMENT ON COLUMN app.events.user_id IS
+    'Пустой у анонимных сессий: до входа в аккаунт продукт знает только устройство. Связывание с пользователем — отдельная задача, см. marts.stg_events.';
 COMMENT ON COLUMN app.events.event_uid IS
     'Идемпотентный ключ, присвоенный клиентом. НЕ уникален в таблице: повторная доставка того же события приходит с тем же ключом и новым event_id. Ключ дедупликации.';
 COMMENT ON COLUMN app.events.ingested_at IS

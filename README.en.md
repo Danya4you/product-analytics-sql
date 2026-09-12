@@ -17,8 +17,8 @@ signups → trial → payment → subscription life → churn
 channels activation plans         MRR         prediction
 ```
 
-**11,999** customer signups · **432,000** events after cleaning · **20 months** ·
-**10** analysis blocks · **18** automated data quality checks
+**11,999** customer accounts · **472,000** rows of raw event log · **20 months** ·
+**10** analysis blocks · **23** automated data quality checks
 
 ---
 
@@ -45,29 +45,29 @@ channels activation plans         MRR         prediction
 
 ---
 
-## Four results worth the effort
+## Five results worth the effort
 
-**Paid acquisition does not pay back.** 87.8% of the ad budget goes to users who
-never pay. Gross profit from paid channels is **−13.3M ₽**; paid search pays back
-in 22.6 months against an average subscription life of 7 months. That is not
-"slow payback", that is "never".
+**A quarter of signups cannot be assigned to any channel.** The channel is not
+stored anywhere — it is reconstructed from marketing touches on the device, and
+for 23.4% of users no touches survived. They can neither be dropped nor folded
+into "direct", so CAC is reported as a range: 4,813–6,290 ₽ for paid search.
+
+**Paid acquisition does not pay back.** 86.8% of the ad budget goes to users who
+never pay. Gross profit from paid channels is **−19.3M ₽**; paid social runs at
+LTV/CAC 0.35 and pays back in 56 months against an average subscription life of 7.
 
 **The first seven days decide everything.** Activated users — one project plus
-three tasks in week one — pay 4.7× more often: **37.0% vs 7.8%**. The retention
-gap never closes. The single largest hole in the funnel: 3,255 people confirmed
-their email and never created a project.
+three tasks in week one — pay 5.8× more often: **39.1% vs 6.7%**. The single
+largest hole in the funnel: 3,188 people confirmed their email and never created
+a project.
 
-**Churn is visible a month out.** Activity in the 28 days before cancellation
-drops **65.9%** for churning subscriptions against 8.7% for surviving ones. The
-rule flags 13.9% of MRR as at risk and turns into a call list for support.
+**A quarter of churn is not a customer decision.** Failed payments account for
+25.2% of churned subscriptions and 279k ₽ of lost MRR — and those customers
+lived *longer* than the rest. Fixed by a dunning schedule, not by the product.
 
-**A quarter of lost MRR is failed payments, not lost customers.** The largest
-single churn reason (27.1%, 272,927 ₽) is a card that expired or a bank that
-declined. Those subscriptions lived *longer* than other churned ones. Fixing the
-dunning schedule is the cheapest win in the whole report.
-
-Full write-up with every number and caveat: [docs/findings.md](docs/findings.md)
-*(in Russian)*.
+**Inviting colleagues does almost nothing.** Naively it looks like +15.2pp on
+conversion. Within comparable segments, 0.5 to 6.0pp remain and no cell clears
+the significance threshold.
 
 ---
 
@@ -100,8 +100,8 @@ docker compose up -d
 PGHOST=localhost PGPORT=5433 PGUSER=postgres PGPASSWORD=postgres ./scripts/build.sh
 ```
 
-A full build takes about two minutes: 12 seconds to generate, half a minute to
-load 440,000 rows of raw event log, the rest to build marts. For a quick pass:
+A full build takes about four minutes: half a minute to generate, a minute and a
+half to load 472,000 rows of raw event log, the rest to build marts. For a quick pass:
 `USERS=4000 ./scripts/build.sh`.
 
 The dashboard is rebuilt from the database by a script — its numbers are never
@@ -123,10 +123,10 @@ Nothing needs to be run to read the results: the complete query output is in
 sql/
   00_schema.sql          raw layer `app`: 9 tables, keys, CHECK constraints
   01_load.sql            CSV load via \copy
-  marts/                 stg_events, dim_user, fct_subscription, fct_mrr_movement, …
+  marts/                 stg_identity, stg_events, stg_attribution, dim_user, fct_*
   analysis/              the ten analysis blocks
 tests/
-  data_quality.sql       18 checks; exits non-zero on failure
+  data_quality.sql       23 checks; exits non-zero on failure
 etl/
   generate_data.py       data generator, zero dependencies
 docs/
@@ -151,6 +151,25 @@ prompt to ask why the field isn't in a mart yet.
 
 Working through these is half the value of the repository. Each one is
 documented at length in the code itself.
+
+**The acquisition channel is not in the database — it has to be reconstructed.**
+The product only knows the device and the marketing touches recorded on it before
+signup. The channel is derived by a model (last non-direct click, 30-day window),
+for a quarter of users it cannot be derived at all, and a different model — first
+touch — gives a different answer. Both are computed side by side so it is visible
+how much the conclusion rests on the choice of model.
+
+**Cost of acquisition is assembled from two sources at different grains.** Ad
+spend arrives as daily rows per campaign, signups arrive one by one; there is no
+shared key. CAC is therefore reported twice — over attributed signups only (an
+upper bound) and with unattributed signups distributed across channels (a lower
+bound).
+
+**Churn reasons are known for a minority.** Passive churn has no reason at all:
+the payment failed, the customer cancelled nothing. Of the rest, fewer than half
+fill in the survey, and they fill it in messily — casing, spacing, free text.
+Normalisation lives in the mart, and shares are computed against an honest
+denominator.
 
 **The raw log is dirty, and the cleaning lives in exactly one place.** Tracker
 retries duplicate 1.8% of rows, the dump contains staff accounts, and some events
@@ -200,7 +219,7 @@ approximation: `marts.norm_cdf()`, `marts.z_two_proportions()`,
 
 ## Data quality checks
 
-`tests/data_quality.sql` holds 18 checks for the things the database cannot
+`tests/data_quality.sql` holds 23 checks for the things the database cannot
 enforce on its own: consistency across tables, agreement with the snapshot date,
 and reconciliation between marts and the raw layer. The last one matters most —
 a mart that has silently drifted from its source is the worst kind of bug,
