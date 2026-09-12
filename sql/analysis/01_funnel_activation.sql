@@ -51,21 +51,36 @@ ORDER BY step_no;
 -- Если разрыв держится и в конверсии, и в выручке — активация не просто
 -- коррелирует с платящими, а отбирает другой по качеству сегмент.
 
-WITH base AS (
-    SELECT * FROM marts.dim_user WHERE is_matured
+-- ОСТОРОЖНО с соединением пользователя и его подписок. У пользователя их
+-- может быть несколько: примерно 9 % ушедших возвращаются и заводят вторую.
+-- Наивный LEFT JOIN размножает такого человека на столько строк, сколько у
+-- него подписок, и count(*) начинает считать не людей, а пары. Ошибка тихая:
+-- числа сдвигаются на проценты и выглядят правдоподобно.
+--
+-- Поэтому деньги сворачиваются до одного значения на пользователя ДО
+-- соединения, и только потом присоединяются к карточке.
+WITH revenue AS (
+    SELECT user_id, sum(revenue_rub) AS revenue_rub
+    FROM marts.fct_subscription
+    GROUP BY user_id
+),
+base AS (
+    SELECT u.*, coalesce(r.revenue_rub, 0) AS revenue_rub
+    FROM marts.dim_user u
+    LEFT JOIN revenue r USING (user_id)
+    WHERE u.is_matured
 )
 SELECT
-    CASE WHEN b.is_activated THEN 'Активировались' ELSE 'Нет' END        AS "Сегмент",
+    CASE WHEN is_activated THEN 'Активировались' ELSE 'Нет' END          AS "Сегмент",
     count(*)                                                             AS "Пользователей",
     round(100.0 * count(*) / sum(count(*)) OVER (), 1)                   AS "Доля, %",
-    count(*) FILTER (WHERE b.is_converted)                               AS "Оплатили",
-    round(100.0 * count(*) FILTER (WHERE b.is_converted) / count(*), 1)  AS "Конверсия, %",
-    round(avg(b.tasks_first_7d), 1)                                      AS "Задач за 7 дней",
-    round(coalesce(sum(s.revenue_rub), 0) / count(*))                    AS "Выручка на юзера, ₽"
-FROM base b
-LEFT JOIN marts.fct_subscription s ON s.user_id = b.user_id
-GROUP BY b.is_activated
-ORDER BY b.is_activated DESC;
+    count(*) FILTER (WHERE is_converted)                                 AS "Оплатили",
+    round(100.0 * count(*) FILTER (WHERE is_converted) / count(*), 1)    AS "Конверсия, %",
+    round(avg(tasks_first_7d), 1)                                        AS "Задач за 7 дней",
+    round(sum(revenue_rub) / count(*))                                   AS "Выручка на юзера, ₽"
+FROM base
+GROUP BY is_activated
+ORDER BY is_activated DESC;
 
 \echo ''
 \echo '=== 1.3 Воронка по каналам привлечения ==='

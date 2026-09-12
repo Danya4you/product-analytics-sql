@@ -202,6 +202,7 @@ cs AS (
 )
 SELECT cu.channel_name AS label,
        round(100.0 * cu.paying / cu.signups, 1) AS conversion,
+       round(sp.spend_rub) AS spend,
        round(cs.arpu * 0.8 / nullif(cs.churn, 0)
              / nullif(sp.spend_rub / nullif(cu.paying, 0), 0), 2) AS ltv_cac
 FROM cu
@@ -218,6 +219,37 @@ GROUP BY attribution_quality
 ORDER BY count(*) DESC
 """
 
+
+Q_SUMMARY = """
+-- Всё, что нужно блоку «Главное», одной строкой: иначе сводка собирается из
+-- пяти запросов и однажды разойдётся с графиками, под которыми стоит.
+WITH act AS (
+    SELECT round(100.0 * count(*) FILTER (WHERE is_converted AND is_activated)
+                 / nullif(count(*) FILTER (WHERE is_activated), 0), 1)        AS act_conv,
+           round(100.0 * count(*) FILTER (WHERE is_converted AND NOT is_activated)
+                 / nullif(count(*) FILTER (WHERE NOT is_activated), 0), 1)    AS other_conv
+    FROM marts.dim_user WHERE is_matured
+),
+ads AS (
+    SELECT count(*) AS signups, count(*) FILTER (WHERE is_converted) AS paying
+    FROM marts.dim_user WHERE is_matured AND channel_group = 'paid'
+),
+spend AS (SELECT coalesce(sum(spend_rub), 0) AS total FROM app.ad_spend),
+first_q AS (
+    SELECT round(sum(mrr_delta_rub) FILTER (WHERE movement_type IN ('new','reactivation','expansion'))
+                 / nullif(abs(sum(mrr_delta_rub) FILTER (WHERE movement_type IN ('contraction','churn'))), 0), 2) AS ratio
+    FROM marts.fct_mrr_movement
+    WHERE date_trunc('quarter', month) = (SELECT date_trunc('quarter', min(month))
+                                            FROM marts.fct_mrr_movement)
+),
+period AS (
+    SELECT count(DISTINCT month) AS months FROM marts.fct_mrr_movement
+)
+SELECT act.act_conv, act.other_conv, ads.signups, ads.paying,
+       round(100.0 * (ads.signups - ads.paying) / nullif(ads.signups, 0), 1) AS wasted_pct,
+       round(spend.total) AS spend, first_q.ratio AS qr_first, period.months
+FROM act, ads, spend, first_q, period
+"""
 
 Q_TREND = """
 -- Последние два ПОЛНЫХ месяца: текущий на дату среза оборван и сравнивать
@@ -324,12 +356,37 @@ def esc(s) -> str:
 
 
 def fmt_money(v: float) -> str:
+    # Минус — типографский U+2212, а не дефис: «-19,3» и «−19,3» выглядят
+    # по-разному, и второе читается как число, а не как перенос.
+    # Точность падает с ростом суммы: у «−19,30 млн» вторая цифра после запятой
+    # создаёт ложное впечатление точности там, где её нет.
     v = float(v)
-    if abs(v) >= 1_000_000:
-        return f"{v / 1_000_000:.2f} млн ₽".replace(".", ",")
-    if abs(v) >= 1000:
-        return f"{v / 1000:.0f} тыс ₽"
-    return f"{v:.0f} ₽"
+    sign = "\u2212" if v < 0 else ""
+    a = abs(v)
+    if a >= 10_000_000:
+        return sign + f"{a / 1_000_000:.1f} млн ₽".replace(".", ",")
+    if a >= 1_000_000:
+        return sign + f"{a / 1_000_000:.2f} млн ₽".replace(".", ",")
+    if a >= 1000:
+        return sign + f"{a / 1000:.0f} тыс ₽"
+    return sign + f"{a:.0f} ₽"
+
+
+def plural(n, one: str, few: str, many: str) -> str:
+    """Согласование существительного с числом: 1 подписка, 2 подписки, 5 подписок.
+
+    Без этого в отчёте появляются «22 аккаунтов» и «3 человек» — мелочь, по
+    которой сразу видно, что текст собран автоматически и не вычитан.
+    """
+    n = abs(int(n))
+    if 11 <= n % 100 <= 14:
+        return many
+    last = n % 10
+    if last == 1:
+        return one
+    if 2 <= last <= 4:
+        return few
+    return many
 
 
 def short_money(v) -> str:
@@ -727,6 +784,26 @@ header a {{ color: var(--s1); }}
                 font-variant-numeric: tabular-nums; }}
 .tile .delta .arrow {{ font-size: 10px; }}
 
+/* ---------- сводка ---------- */
+.summary {{ margin: 34px 0 8px; padding: 24px 26px 22px; border-radius: 12px;
+            background: var(--surface); border: 1px solid var(--grid);
+            border-left: 3px solid var(--s1); }}
+.summary h2 {{ font-size: 19px; margin: 0 0 10px; letter-spacing: -0.02em; }}
+.summary .lead {{ margin: 0 0 18px; font-size: 15.5px; max-width: 66ch; }}
+.summary ol {{ margin: 0; padding-left: 22px; display: grid; gap: 11px; }}
+.summary li {{ font-size: 14px; color: var(--ink2); max-width: 74ch; }}
+.summary li b {{ color: var(--ink); font-weight: 640; }}
+.summary a {{ color: var(--s1); text-decoration: none;
+              border-bottom: 1px solid transparent; }}
+.summary a:hover {{ border-bottom-color: var(--s1); }}
+.todo {{ margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--grid); }}
+.todo h3 {{ font-size: 15px; margin: 0 0 12px; }}
+.todo ol {{ counter-reset: none; }}
+.todo li {{ color: var(--ink2); }}
+.todo .cost {{ display: inline-block; font-size: 11.5px; color: var(--muted);
+               border: 1px solid var(--grid); border-radius: 20px;
+               padding: 1px 8px; margin-left: 6px; white-space: nowrap; }}
+
 .section {{ font-size: 12.5px; font-weight: 650; letter-spacing: .09em;
             text-transform: uppercase; color: var(--muted);
             margin: 42px 0 16px; padding-bottom: 9px; border-bottom: 1px solid var(--grid); }}
@@ -804,8 +881,8 @@ footer {{ color: var(--muted); font-size: 13px; margin-top: 34px; line-height: 1
   body {{ background: #fff; color: #000; padding: 0; font-size: 11pt; }}
   .wrap {{ max-width: none; }}
   #tip, .howto {{ display: none !important; }}
-  figure, .tile, .glossary {{ break-inside: avoid; page-break-inside: avoid;
-                              box-shadow: none; }}
+  figure, .tile, .glossary, .summary {{ break-inside: avoid; page-break-inside: avoid;
+                                        box-shadow: none; }}
   .section {{ break-after: avoid; page-break-after: avoid; }}
   details > *:not(summary) {{ display: block !important; }}
   details summary {{ display: none; }}
@@ -857,10 +934,11 @@ def table(headers, rows) -> str:
     return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
 
 
-def figure(title, sub, svg, caption, table_html=None) -> str:
+def figure(title, sub, svg, caption, table_html=None, anchor=None) -> str:
     extra = (f'<details><summary>Показать числами</summary>{table_html}</details>'
              if table_html else "")
-    return f"""<figure class="reveal">
+    ident = f' id="{anchor}"' if anchor else ""
+    return f"""<figure class="reveal"{ident}>
   <h3>{title}</h3>
   <p class="sub">{sub}</p>
   <div class="scroll" tabindex="0" role="group" aria-label="График, прокручивается по горизонтали">{svg}</div>
@@ -941,6 +1019,7 @@ def build(psql: str) -> str:
     trend = query(psql, Q_TREND)
     ab = query(psql, Q_AB)
     risk = query(psql, Q_RISK)
+    summary = query(psql, Q_SUMMARY)[0]
 
     top = float(funnel[0]["users"])
     paid = float(funnel[-1]["users"])
@@ -1018,6 +1097,7 @@ def build(psql: str) -> str:
             f"прочности сокращается.",
             table(["Месяц", "Приход, ₽", "Потери, ₽"],
                   [(r["label"], spaced(r["gained"]), spaced(r["lost"])) for r in move]),
+            anchor="mrr-movements",
         ),
     ]
 
@@ -1028,12 +1108,14 @@ def build(psql: str) -> str:
             "показывают, сколько людей потерялось между шагами.",
             chart_funnel(funnel, LIGHT),
             f"<b>Вывод.</b> Из {spaced(top)} зарегистрировавшихся платят {spaced(paid)} — "
-            f"{pct(paid / top * 100)}. Самая большая потеря — {spaced(biggest_drop[0])} человек "
+            f"{pct(paid / top * 100)}. Самая большая потеря — {spaced(biggest_drop[0])} "
+            f"{plural(biggest_drop[0], 'человек', 'человека', 'человек')} "
             f"на шаге «{esc(biggest_drop[1])}»: люди подтвердили почту и не начали работать. "
             f"Это единственное место, где имеет смысл что-то менять в первую очередь.",
             table(["Шаг", "Человек", "От старта"],
                   [(r["label"], spaced(r["users"]), pct(float(r["users"]) / top * 100))
                    for r in funnel]),
+            anchor="funnel",
         ),
         figure(
             "Сколько людей продолжают пользоваться",
@@ -1046,6 +1128,7 @@ def build(psql: str) -> str:
             "разные по качеству группы — и работать надо именно с ней.",
             table(["Неделя", "Освоились, %", "Остальные, %"],
                   [(f'Н{r["label"]}', r["activated"], r["other"]) for r in retention]),
+            anchor="retention",
         ),
     ]
 
@@ -1078,6 +1161,7 @@ def build(psql: str) -> str:
             table(["Канал", "Окупаемость (LTV/CAC)", "Конверсия, %"],
                   [(r["label"], str(r["ltv_cac"]).replace(".", ","), r["conversion"])
                    for r in channels]),
+            anchor="channels",
         ),
     ]
 
@@ -1095,13 +1179,16 @@ def build(psql: str) -> str:
             "число клиентов: уход крупного клиента стоит дороже.",
             chart_risk(risk),
             f"<b>Вывод.</b> Под риском {esc(fmt_money(risk_mrr))} в месяц — это "
-            f"{spaced(risk_subs)} подписок. Начинать стоит с замолчавших: "
-            f"{esc(spaced(silent['subs'])) if silent else 'нескольких'} аккаунтов — объём, "
-            f"который поддержка отработает за день. Оговорка: правило проверено на "
+            f"{spaced(risk_subs)} "
+            f"{plural(risk_subs, 'подписка', 'подписки', 'подписок')}. Начинать стоит "
+            f"с замолчавших: {esc(spaced(silent['subs'])) if silent else 'несколько'} "
+            f"{plural(silent['subs'], 'аккаунт', 'аккаунта', 'аккаунтов') if silent else ''} — "
+            f"объём, который поддержка отработает за день. Оговорка: правило проверено на "
             f"прошлых уходах, а не на будущих. Прежде чем считать его рабочим, надо "
             f"зафиксировать порог и посмотреть через месяц, сколько отмеченных ушло.",
             table(["Группа", "Подписок", "MRR, ₽", "Доля MRR, %"],
                   [(r["label"], spaced(r["subs"]), spaced(r["mrr"]), r["share"]) for r in risk]),
+            anchor="risk",
         ),
     ]
 
@@ -1130,6 +1217,80 @@ def build(psql: str) -> str:
                     r["treatment_pct"], r["diff"]) for r in ab]),
         ),
     ]
+
+    # ---- сводный вывод -------------------------------------------------- #
+    # Формулировки подстраиваются под знак показателей: если данные поменяются,
+    # сводка не должна остаться утверждать обратное тому, что на графиках.
+    qr_first = float(summary["qr_first"]) if summary["qr_first"] else None
+    losing_spend = sum(float(r["spend"]) for r in channels
+                       if r["ltv_cac"] and float(r["ltv_cac"]) < 1 and r["spend"])
+    act_conv, other_conv = float(summary["act_conv"]), float(summary["other_conv"])
+    times = act_conv / other_conv if other_conv else 0
+
+    growth_line = (
+        f'<b>Рост держится, но запас сокращается.</b> Приход новых денег перекрывал '
+        f'потери в {esc(f"{qr_first:.1f}".replace(".", ","))} раза в начале периода и '
+        f'в {esc(f"{qr:.1f}".replace(".", ","))} раза сейчас. Это обычная картина для '
+        f'растущей компании, но тренд устойчивый. '
+        f'<a href="#mrr-movements">Смотреть график</a>.'
+    ) if qr_first else ""
+
+    ads_line = (
+        f'<b>Реклама не возвращает вложенного.</b> Из {esc(fmt_money(float(summary["spend"])))} '
+        f'рекламного бюджета {esc(pct(float(summary["wasted_pct"])))} ушло на людей, которые '
+        f'не заплатили. Прибыль платных каналов — {esc(fmt_money(profit))}. '
+        f'<a href="#channels">Смотреть график</a>.'
+        if profit < 0 else
+        f'<b>Реклама окупается.</b> Прибыль платных каналов — {esc(fmt_money(profit))}. '
+        f'<a href="#channels">Смотреть график</a>.'
+    )
+
+    findings = [
+        f'<b>Всё решается в первую неделю.</b> Кто за семь дней завёл проект и создал '
+        f'три задачи, платит в {esc(f"{times:.1f}".replace(".", ","))} раза чаще: '
+        f'{esc(pct(act_conv))} против {esc(pct(other_conv))}. Дальше этот разрыв не '
+        f'сокращается. <a href="#funnel">Смотреть воронку</a>.',
+        ads_line,
+        growth_line,
+        f'<b>Часть клиентов уже уходит.</b> Активность за последний месяц упала вдвое '
+        f'или прекратилась у действующих подписок на {esc(fmt_money(risk_mrr))} в месяц — '
+        f'это {spaced(risk_subs)} '
+        f'{plural(risk_subs, "подписка", "подписки", "подписок")}. '
+        f'<a href="#risk">Смотреть список</a>.',
+    ]
+
+    verdict_lead = (
+        "Сервис растёт двадцать месяцев подряд, но рост держится на новых клиентах, "
+        "а не на существующих, и оплачен рекламой, которая не возвращает вложенного. "
+        "Главный рычаг — первая неделя: именно там продукт теряет большинство пришедших."
+        if profit < 0 else
+        "Сервис растёт двадцать месяцев подряд. Главный рычаг — первая неделя: "
+        "именно там продукт теряет большинство пришедших."
+    )
+
+    todo = [
+        (f'Обзвонить {esc(spaced(silent["subs"]))} '
+         f'{plural(silent["subs"], "аккаунт", "аккаунта", "аккаунтов")}, которые '
+         f'замолчали, пока они не ушли.' if silent else
+         'Обзвонить замолчавшие аккаунты, пока они не ушли.', "день работы"),
+        (f'Заняться шагом «{esc(biggest_drop[1])}»: там теряется '
+         f'{spaced(biggest_drop[0])} '
+         f'{plural(biggest_drop[0], "человек", "человека", "человек")} — больше, чем '
+         f'на всех следующих шагах вместе.', "продуктовая задача"),
+        (f'Остановить убыточные каналы: на них ушло {esc(fmt_money(losing_spend))} '
+         f'за период.', "решение маркетинга") if losing_spend else None,
+    ]
+    todo = [t for t in todo if t]
+
+    summary_html = (
+        '<section class="summary reveal">'
+        '<h2>Главное</h2>'
+        f'<p class="lead">{verdict_lead}</p>'
+        '<ol>' + "".join(f'<li>{f}</li>' for f in findings if f) + '</ol>'
+        '<div class="todo"><h3>С чего начать</h3><ol>'
+        + "".join(f'<li>{t}<span class="cost">{esc(c)}</span></li>' for t, c in todo)
+        + '</ol></div></section>'
+    )
 
     glossary = "".join(f"<dt>{esc(t)}</dt><dd>{esc(d)}</dd>" for t, d in GLOSSARY)
     built = datetime.now().strftime("%d.%m.%Y %H:%M")
@@ -1160,6 +1321,8 @@ def build(psql: str) -> str:
 </header>
 
 <div class="tiles">{tiles}</div>
+
+{summary_html}
 
 <h2 class="section">Деньги</h2>
 {"".join(money_figs)}

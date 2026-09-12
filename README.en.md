@@ -57,7 +57,7 @@ never pay. Gross profit from paid channels is **−19.3M ₽**; paid social runs
 LTV/CAC 0.35 and pays back in 56 months against an average subscription life of 7.
 
 **The first seven days decide everything.** Activated users — one project plus
-three tasks in week one — pay 5.8× more often: **39.1% vs 6.7%**. The single
+three tasks in week one — pay 5.9× more often: **38.9% vs 6.6%**. The single
 largest hole in the funnel: 3,188 people confirmed their email and never created
 a project.
 
@@ -65,7 +65,7 @@ a project.
 25.2% of churned subscriptions and 279k ₽ of lost MRR — and those customers
 lived *longer* than the rest. Fixed by a dunning schedule, not by the product.
 
-**Inviting colleagues does almost nothing.** Naively it looks like +15.2pp on
+**Inviting colleagues does almost nothing.** Naively it looks like +15.1pp on
 conversion. Within comparable segments, 0.5 to 6.0pp remain and no cell clears
 the significance threshold.
 

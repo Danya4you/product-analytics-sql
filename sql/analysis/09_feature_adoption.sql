@@ -19,19 +19,29 @@
 \echo ''
 \echo '=== 9.1 Сравнение в лоб (так делать нельзя, но так делают) ==='
 
-WITH adoption AS (
+-- Свёртка подписок до одной строки на пользователя обязательна: вернувшиеся
+-- клиенты заводят вторую подписку, и наивное соединение посчитало бы их
+-- дважды. Срок жизни берётся максимальный, выручка — суммарная.
+WITH per_user AS (
+    SELECT user_id,
+           bool_or(is_converted)   AS is_converted,
+           max(tenure_months)      AS tenure_months,
+           sum(revenue_rub)        AS revenue_rub
+    FROM marts.fct_subscription
+    GROUP BY user_id
+),
+adoption AS (
     SELECT
         u.user_id,
         u.is_activated,
         u.company_size,
-        (u.invites_first_7d > 0)      AS invited_team,
-        (u.integrations_first_7d > 0) AS connected_integration,
-        s.is_converted,
-        s.is_active,
+        (u.invites_first_7d > 0)        AS invited_team,
+        (u.integrations_first_7d > 0)   AS connected_integration,
+        coalesce(s.is_converted, false) AS is_converted,
         s.tenure_months,
         s.revenue_rub
     FROM marts.dim_user u
-    LEFT JOIN marts.fct_subscription s ON s.user_id = u.user_id
+    LEFT JOIN per_user s USING (user_id)
     WHERE u.is_matured
 ),
 features AS (

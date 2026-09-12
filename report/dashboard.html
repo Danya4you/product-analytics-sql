@@ -106,6 +106,26 @@ header a { color: var(--s1); }
                 font-variant-numeric: tabular-nums; }
 .tile .delta .arrow { font-size: 10px; }
 
+/* ---------- сводка ---------- */
+.summary { margin: 34px 0 8px; padding: 24px 26px 22px; border-radius: 12px;
+            background: var(--surface); border: 1px solid var(--grid);
+            border-left: 3px solid var(--s1); }
+.summary h2 { font-size: 19px; margin: 0 0 10px; letter-spacing: -0.02em; }
+.summary .lead { margin: 0 0 18px; font-size: 15.5px; max-width: 66ch; }
+.summary ol { margin: 0; padding-left: 22px; display: grid; gap: 11px; }
+.summary li { font-size: 14px; color: var(--ink2); max-width: 74ch; }
+.summary li b { color: var(--ink); font-weight: 640; }
+.summary a { color: var(--s1); text-decoration: none;
+              border-bottom: 1px solid transparent; }
+.summary a:hover { border-bottom-color: var(--s1); }
+.todo { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--grid); }
+.todo h3 { font-size: 15px; margin: 0 0 12px; }
+.todo ol { counter-reset: none; }
+.todo li { color: var(--ink2); }
+.todo .cost { display: inline-block; font-size: 11.5px; color: var(--muted);
+               border: 1px solid var(--grid); border-radius: 20px;
+               padding: 1px 8px; margin-left: 6px; white-space: nowrap; }
+
 .section { font-size: 12.5px; font-weight: 650; letter-spacing: .09em;
             text-transform: uppercase; color: var(--muted);
             margin: 42px 0 16px; padding-bottom: 9px; border-bottom: 1px solid var(--grid); }
@@ -183,8 +203,8 @@ footer { color: var(--muted); font-size: 13px; margin-top: 34px; line-height: 1.
   body { background: #fff; color: #000; padding: 0; font-size: 11pt; }
   .wrap { max-width: none; }
   #tip, .howto { display: none !important; }
-  figure, .tile, .glossary { break-inside: avoid; page-break-inside: avoid;
-                              box-shadow: none; }
+  figure, .tile, .glossary, .summary { break-inside: avoid; page-break-inside: avoid;
+                                        box-shadow: none; }
   .section { break-after: avoid; page-break-after: avoid; }
   details > *:not(summary) { display: block !important; }
   details summary { display: none; }
@@ -240,7 +260,9 @@ footer { color: var(--muted); font-size: 13px; margin-top: 34px; line-height: 1.
   </div>
 </header>
 
-<div class="tiles"><div class="tile reveal"><div class="k">Выручка в месяц</div><div class="v" data-num="2.795804" data-dec="2" data-suffix=" млн ₽">2,80 млн ₽</div><div class="delta"><span class="arrow">▲</span> +2,3% за последний полный месяц</div><div class="n">Столько сервис получает каждый месяц от действующих подписок — это и есть <span class="term" tabindex="0" role="button" data-tip="Monthly Recurring Revenue: сумма всех регулярных ежемесячных платежей">MRR</span>.</div></div><div class="tile reveal"><div class="k">Платящих клиентов</div><div class="v" data-num="1623.0" data-dec="0" data-suffix="">1 623</div><div class="delta"><span class="arrow">▲</span> +50 подписок за месяц</div><div class="n">Подписок, действующих на дату отчёта.</div></div><div class="tile reveal"><div class="k">Доходят до оплаты</div><div class="v" data-num="19.6" data-dec="1" data-suffix="%">19,6%</div><div class="n">Из зарегистрировавшихся, кто успел пройти пробный период и принять решение.</div></div><div class="tile reveal warn"><div class="k">Денег остаётся через полгода</div><div class="v" data-num="78.9" data-dec="1" data-suffix="%">78,9%</div><div class="n">От суммы, которую та же группа платила в первый месяц (<span class="term" tabindex="0" role="button" data-tip="Net Revenue Retention: удержание выручки по когорте">NRR</span>).</div><div class="flag">ниже нормы</div></div><div class="tile reveal warn"><div class="k">Приход против потерь</div><div class="v" data-num="2.09" data-dec="2" data-suffix="×">2,09×</div><div class="delta"><span class="arrow">▼</span> −0,54 к прошлому кварталу</div><div class="n">Во столько раз новые деньги перекрывают потерянные за последний квартал (<span class="term" tabindex="0" role="button" data-tip="Отношение прироста MRR к его потерям. Ниже 1 — компания сжимается">Quick Ratio</span>).</div><div class="flag">растёт</div></div><div class="tile reveal crit"><div class="k">Реклама</div><div class="v" data-num="-19.302935" data-dec="1" data-suffix=" млн ₽">-19,30 млн ₽</div><div class="n">Прибыль от платных каналов за всё время с учётом затрат на них.</div><div class="flag">не окупается</div></div></div>
+<div class="tiles"><div class="tile reveal"><div class="k">Выручка в месяц</div><div class="v" data-num="2.795804" data-dec="2" data-suffix=" млн ₽">2,80 млн ₽</div><div class="delta"><span class="arrow">▲</span> +2,3% за последний полный месяц</div><div class="n">Столько сервис получает каждый месяц от действующих подписок — это и есть <span class="term" tabindex="0" role="button" data-tip="Monthly Recurring Revenue: сумма всех регулярных ежемесячных платежей">MRR</span>.</div></div><div class="tile reveal"><div class="k">Платящих клиентов</div><div class="v" data-num="1623.0" data-dec="0" data-suffix="">1 623</div><div class="delta"><span class="arrow">▲</span> +50 подписок за месяц</div><div class="n">Подписок, действующих на дату отчёта.</div></div><div class="tile reveal"><div class="k">Доходят до оплаты</div><div class="v" data-num="19.6" data-dec="1" data-suffix="%">19,6%</div><div class="n">Из зарегистрировавшихся, кто успел пройти пробный период и принять решение.</div></div><div class="tile reveal warn"><div class="k">Денег остаётся через полгода</div><div class="v" data-num="78.9" data-dec="1" data-suffix="%">78,9%</div><div class="n">От суммы, которую та же группа платила в первый месяц (<span class="term" tabindex="0" role="button" data-tip="Net Revenue Retention: удержание выручки по когорте">NRR</span>).</div><div class="flag">ниже нормы</div></div><div class="tile reveal warn"><div class="k">Приход против потерь</div><div class="v" data-num="2.09" data-dec="2" data-suffix="×">2,09×</div><div class="delta"><span class="arrow">▼</span> −0,54 к прошлому кварталу</div><div class="n">Во столько раз новые деньги перекрывают потерянные за последний квартал (<span class="term" tabindex="0" role="button" data-tip="Отношение прироста MRR к его потерям. Ниже 1 — компания сжимается">Quick Ratio</span>).</div><div class="flag">растёт</div></div><div class="tile reveal crit"><div class="k">Реклама</div><div class="v" data-num="-19.302935" data-dec="1" data-suffix=" млн ₽">−19,3 млн ₽</div><div class="n">Прибыль от платных каналов за всё время с учётом затрат на них.</div><div class="flag">не окупается</div></div></div>
+
+<section class="summary reveal"><h2>Главное</h2><p class="lead">Сервис растёт двадцать месяцев подряд, но рост держится на новых клиентах, а не на существующих, и оплачен рекламой, которая не возвращает вложенного. Главный рычаг — первая неделя: именно там продукт теряет большинство пришедших.</p><ol><li><b>Всё решается в первую неделю.</b> Кто за семь дней завёл проект и создал три задачи, платит в 5,9 раза чаще: 38,9 % против 6,6 %. Дальше этот разрыв не сокращается. <a href="#funnel">Смотреть воронку</a>.</li><li><b>Реклама не возвращает вложенного.</b> Из 24,0 млн ₽ рекламного бюджета 86,9 % ушло на людей, которые не заплатили. Прибыль платных каналов — −19,3 млн ₽. <a href="#channels">Смотреть график</a>.</li><li><b>Рост держится, но запас сокращается.</b> Приход новых денег перекрывал потери в 14,3 раза в начале периода и в 2,1 раза сейчас. Это обычная картина для растущей компании, но тренд устойчивый. <a href="#mrr-movements">Смотреть график</a>.</li><li><b>Часть клиентов уже уходит.</b> Активность за последний месяц упала вдвое или прекратилась у действующих подписок на 314 тыс ₽ в месяц — это 192 подписки. <a href="#risk">Смотреть список</a>.</li></ol><div class="todo"><h3>С чего начать</h3><ol><li>Обзвонить 22 аккаунта, которые замолчали, пока они не ушли.<span class="cost">день работы</span></li><li>Заняться шагом «Создал проект»: там теряется 3 188 человек — больше, чем на всех следующих шагах вместе.<span class="cost">продуктовая задача</span></li><li>Остановить убыточные каналы: на них ушло 21,5 млн ₽ за период.<span class="cost">решение маркетинга</span></li></ol></div></section>
 
 <h2 class="section">Деньги</h2>
 <figure class="reveal">
@@ -288,7 +310,7 @@ footer { color: var(--muted); font-size: 13px; margin-top: 34px; line-height: 1.
 </svg></div>
   <figcaption><b>Вывод.</b> Выручка росла все двадцать месяцев без единого падения. Но график суммы не показывает, какой ценой этот рост даётся — для этого нужен следующий.</figcaption>
   <details><summary>Показать числами</summary><table><thead><tr><th>Месяц</th><th>Выручка в месяц, ₽</th></tr></thead><tbody><tr><td>2025-01</td><td>38 020</td></tr><tr><td>2025-02</td><td>120 018</td></tr><tr><td>2025-03</td><td>212 645</td></tr><tr><td>2025-04</td><td>349 005</td></tr><tr><td>2025-05</td><td>449 033</td></tr><tr><td>2025-06</td><td>570 318</td></tr><tr><td>2025-07</td><td>708 519</td></tr><tr><td>2025-08</td><td>808 215</td></tr><tr><td>2025-09</td><td>962 305</td></tr><tr><td>2025-10</td><td>1 145 985</td></tr><tr><td>2025-11</td><td>1 337 795</td></tr><tr><td>2025-12</td><td>1 547 702</td></tr><tr><td>2026-01</td><td>1 657 614</td></tr><tr><td>2026-02</td><td>1 803 599</td></tr><tr><td>2026-03</td><td>2 031 540</td></tr><tr><td>2026-04</td><td>2 213 937</td></tr><tr><td>2026-05</td><td>2 346 526</td></tr><tr><td>2026-06</td><td>2 518 862</td></tr><tr><td>2026-07</td><td>2 733 317</td></tr><tr><td>2026-08</td><td>2 795 804</td></tr></tbody></table></details>
-</figure><figure class="reveal">
+</figure><figure class="reveal" id="mrr-movements">
   <h3>Откуда берутся и куда уходят деньги</h3>
   <p class="sub">Тот же рост, разложенный на части. Вверх — новые подписки, вернувшиеся клиенты и переходы на дорогой тариф. Вниз — переходы на дешёвый тариф и ушедшие клиенты.</p>
   <div class="scroll" tabindex="0" role="group" aria-label="График, прокручивается по горизонтали"><svg viewBox="0 0 820 300" role="img" aria-label="Приход и потери MRR по месяцам" preserveAspectRatio="xMidYMid meet">
@@ -299,59 +321,59 @@ footer { color: var(--muted); font-size: 13px; margin-top: 34px; line-height: 1.
 <line class="grid" x1="78" y1="14.0" x2="800" y2="14.0"/>
 <text class="axis-label" x="70" y="18.0" text-anchor="end">+400 тыс</text>
 <rect class="bar-pos hit col-grow" x="85.0" y="125.8" width="22.0" height="12.2" rx="4" style="transform-origin:bottom;transition-delay:0ms" data-tip="2025-01 — приход 39 тыс ₽"/>
-<rect class="bar-neg hit col-grow" x="85.0" y="140.0" width="22.0" height="2.0" rx="4" style="transform-origin:top;transition-delay:0ms" data-tip="2025-01 — потери -1 тыс ₽"/>
+<rect class="bar-neg hit col-grow" x="85.0" y="140.0" width="22.0" height="2.0" rx="4" style="transform-origin:top;transition-delay:0ms" data-tip="2025-01 — потери −1 тыс ₽"/>
 <text class="axis-label" x="96.0" y="282" text-anchor="middle">2025-01</text>
 <rect class="bar-pos hit col-grow" x="121.2" y="112.1" width="22.0" height="25.9" rx="4" style="transform-origin:bottom;transition-delay:28ms" data-tip="2025-02 — приход 83 тыс ₽"/>
-<rect class="bar-neg hit col-grow" x="121.2" y="140.0" width="22.0" height="2.0" rx="4" style="transform-origin:top;transition-delay:28ms" data-tip="2025-02 — потери -1 тыс ₽"/>
+<rect class="bar-neg hit col-grow" x="121.2" y="140.0" width="22.0" height="2.0" rx="4" style="transform-origin:top;transition-delay:28ms" data-tip="2025-02 — потери −1 тыс ₽"/>
 <rect class="bar-pos hit col-grow" x="157.2" y="105.2" width="22.0" height="32.8" rx="4" style="transform-origin:bottom;transition-delay:56ms" data-tip="2025-03 — приход 106 тыс ₽"/>
-<rect class="bar-neg hit col-grow" x="157.2" y="140.0" width="22.0" height="4.1" rx="4" style="transform-origin:top;transition-delay:56ms" data-tip="2025-03 — потери -13 тыс ₽"/>
+<rect class="bar-neg hit col-grow" x="157.2" y="140.0" width="22.0" height="4.1" rx="4" style="transform-origin:top;transition-delay:56ms" data-tip="2025-03 — потери −13 тыс ₽"/>
 <rect class="bar-pos hit col-grow" x="193.4" y="92.5" width="22.0" height="45.5" rx="4" style="transform-origin:bottom;transition-delay:84ms" data-tip="2025-04 — приход 147 тыс ₽"/>
-<rect class="bar-neg hit col-grow" x="193.4" y="140.0" width="22.0" height="3.2" rx="4" style="transform-origin:top;transition-delay:84ms" data-tip="2025-04 — потери -10 тыс ₽"/>
+<rect class="bar-neg hit col-grow" x="193.4" y="140.0" width="22.0" height="3.2" rx="4" style="transform-origin:top;transition-delay:84ms" data-tip="2025-04 — потери −10 тыс ₽"/>
 <text class="axis-label" x="204.4" y="282" text-anchor="middle">2025-04</text>
 <rect class="bar-pos hit col-grow" x="229.5" y="96.9" width="22.0" height="41.1" rx="4" style="transform-origin:bottom;transition-delay:112ms" data-tip="2025-05 — приход 132 тыс ₽"/>
-<rect class="bar-neg hit col-grow" x="229.5" y="140.0" width="22.0" height="10.1" rx="4" style="transform-origin:top;transition-delay:112ms" data-tip="2025-05 — потери -32 тыс ₽"/>
+<rect class="bar-neg hit col-grow" x="229.5" y="140.0" width="22.0" height="10.1" rx="4" style="transform-origin:top;transition-delay:112ms" data-tip="2025-05 — потери −32 тыс ₽"/>
 <rect class="bar-pos hit col-grow" x="265.6" y="90.4" width="22.0" height="47.6" rx="4" style="transform-origin:bottom;transition-delay:140ms" data-tip="2025-06 — приход 153 тыс ₽"/>
-<rect class="bar-neg hit col-grow" x="265.6" y="140.0" width="22.0" height="10.0" rx="4" style="transform-origin:top;transition-delay:140ms" data-tip="2025-06 — потери -32 тыс ₽"/>
+<rect class="bar-neg hit col-grow" x="265.6" y="140.0" width="22.0" height="10.0" rx="4" style="transform-origin:top;transition-delay:140ms" data-tip="2025-06 — потери −32 тыс ₽"/>
 <rect class="bar-pos hit col-grow" x="301.7" y="88.4" width="22.0" height="49.6" rx="4" style="transform-origin:bottom;transition-delay:168ms" data-tip="2025-07 — приход 160 тыс ₽"/>
-<rect class="bar-neg hit col-grow" x="301.7" y="140.0" width="22.0" height="6.7" rx="4" style="transform-origin:top;transition-delay:168ms" data-tip="2025-07 — потери -22 тыс ₽"/>
+<rect class="bar-neg hit col-grow" x="301.7" y="140.0" width="22.0" height="6.7" rx="4" style="transform-origin:top;transition-delay:168ms" data-tip="2025-07 — потери −22 тыс ₽"/>
 <text class="axis-label" x="312.7" y="282" text-anchor="middle">2025-07</text>
 <rect class="bar-pos hit col-grow" x="337.8" y="93.7" width="22.0" height="44.3" rx="4" style="transform-origin:bottom;transition-delay:196ms" data-tip="2025-08 — приход 143 тыс ₽"/>
-<rect class="bar-neg hit col-grow" x="337.8" y="140.0" width="22.0" height="13.4" rx="4" style="transform-origin:top;transition-delay:196ms" data-tip="2025-08 — потери -43 тыс ₽"/>
+<rect class="bar-neg hit col-grow" x="337.8" y="140.0" width="22.0" height="13.4" rx="4" style="transform-origin:top;transition-delay:196ms" data-tip="2025-08 — потери −43 тыс ₽"/>
 <rect class="bar-pos hit col-grow" x="373.9" y="79.7" width="22.0" height="58.3" rx="4" style="transform-origin:bottom;transition-delay:224ms" data-tip="2025-09 — приход 188 тыс ₽"/>
-<rect class="bar-neg hit col-grow" x="373.9" y="140.0" width="22.0" height="10.6" rx="4" style="transform-origin:top;transition-delay:224ms" data-tip="2025-09 — потери -34 тыс ₽"/>
+<rect class="bar-neg hit col-grow" x="373.9" y="140.0" width="22.0" height="10.6" rx="4" style="transform-origin:top;transition-delay:224ms" data-tip="2025-09 — потери −34 тыс ₽"/>
 <rect class="bar-pos hit col-grow" x="410.0" y="62.9" width="22.0" height="75.1" rx="4" style="transform-origin:bottom;transition-delay:252ms" data-tip="2025-10 — приход 242 тыс ₽"/>
-<rect class="bar-neg hit col-grow" x="410.0" y="140.0" width="22.0" height="18.2" rx="4" style="transform-origin:top;transition-delay:252ms" data-tip="2025-10 — потери -59 тыс ₽"/>
+<rect class="bar-neg hit col-grow" x="410.0" y="140.0" width="22.0" height="18.2" rx="4" style="transform-origin:top;transition-delay:252ms" data-tip="2025-10 — потери −59 тыс ₽"/>
 <text class="axis-label" x="421.0" y="282" text-anchor="middle">2025-10</text>
 <rect class="bar-pos hit col-grow" x="446.1" y="58.3" width="22.0" height="79.7" rx="4" style="transform-origin:bottom;transition-delay:280ms" data-tip="2025-11 — приход 257 тыс ₽"/>
-<rect class="bar-neg hit col-grow" x="446.1" y="140.0" width="22.0" height="20.2" rx="4" style="transform-origin:top;transition-delay:280ms" data-tip="2025-11 — потери -65 тыс ₽"/>
+<rect class="bar-neg hit col-grow" x="446.1" y="140.0" width="22.0" height="20.2" rx="4" style="transform-origin:top;transition-delay:280ms" data-tip="2025-11 — потери −65 тыс ₽"/>
 <rect class="bar-pos hit col-grow" x="482.2" y="51.4" width="22.0" height="86.6" rx="4" style="transform-origin:bottom;transition-delay:308ms" data-tip="2025-12 — приход 279 тыс ₽"/>
-<rect class="bar-neg hit col-grow" x="482.2" y="140.0" width="22.0" height="21.5" rx="4" style="transform-origin:top;transition-delay:308ms" data-tip="2025-12 — потери -69 тыс ₽"/>
+<rect class="bar-neg hit col-grow" x="482.2" y="140.0" width="22.0" height="21.5" rx="4" style="transform-origin:top;transition-delay:308ms" data-tip="2025-12 — потери −69 тыс ₽"/>
 <rect class="bar-pos hit col-grow" x="518.2" y="74.9" width="22.0" height="63.1" rx="4" style="transform-origin:bottom;transition-delay:336ms" data-tip="2026-01 — приход 204 тыс ₽"/>
-<rect class="bar-neg hit col-grow" x="518.2" y="140.0" width="22.0" height="29.0" rx="4" style="transform-origin:top;transition-delay:336ms" data-tip="2026-01 — потери -94 тыс ₽"/>
+<rect class="bar-neg hit col-grow" x="518.2" y="140.0" width="22.0" height="29.0" rx="4" style="transform-origin:top;transition-delay:336ms" data-tip="2026-01 — потери −94 тыс ₽"/>
 <text class="axis-label" x="529.2" y="282" text-anchor="middle">2026-01</text>
 <rect class="bar-pos hit col-grow" x="554.3" y="71.1" width="22.0" height="66.9" rx="4" style="transform-origin:bottom;transition-delay:364ms" data-tip="2026-02 — приход 216 тыс ₽"/>
-<rect class="bar-neg hit col-grow" x="554.3" y="140.0" width="22.0" height="21.6" rx="4" style="transform-origin:top;transition-delay:364ms" data-tip="2026-02 — потери -70 тыс ₽"/>
+<rect class="bar-neg hit col-grow" x="554.3" y="140.0" width="22.0" height="21.6" rx="4" style="transform-origin:top;transition-delay:364ms" data-tip="2026-02 — потери −70 тыс ₽"/>
 <rect class="bar-pos hit col-grow" x="590.5" y="41.1" width="22.0" height="96.9" rx="4" style="transform-origin:bottom;transition-delay:392ms" data-tip="2026-03 — приход 312 тыс ₽"/>
-<rect class="bar-neg hit col-grow" x="590.5" y="140.0" width="22.0" height="26.2" rx="4" style="transform-origin:top;transition-delay:392ms" data-tip="2026-03 — потери -85 тыс ₽"/>
+<rect class="bar-neg hit col-grow" x="590.5" y="140.0" width="22.0" height="26.2" rx="4" style="transform-origin:top;transition-delay:392ms" data-tip="2026-03 — потери −85 тыс ₽"/>
 <rect class="bar-pos hit col-grow" x="626.5" y="54.6" width="22.0" height="83.4" rx="4" style="transform-origin:bottom;transition-delay:420ms" data-tip="2026-04 — приход 269 тыс ₽"/>
-<rect class="bar-neg hit col-grow" x="626.5" y="140.0" width="22.0" height="26.8" rx="4" style="transform-origin:top;transition-delay:420ms" data-tip="2026-04 — потери -87 тыс ₽"/>
+<rect class="bar-neg hit col-grow" x="626.5" y="140.0" width="22.0" height="26.8" rx="4" style="transform-origin:top;transition-delay:420ms" data-tip="2026-04 — потери −87 тыс ₽"/>
 <text class="axis-label" x="637.5" y="282" text-anchor="middle">2026-04</text>
 <rect class="bar-pos hit col-grow" x="662.6" y="58.3" width="22.0" height="79.7" rx="4" style="transform-origin:bottom;transition-delay:448ms" data-tip="2026-05 — приход 257 тыс ₽"/>
-<rect class="bar-neg hit col-grow" x="662.6" y="140.0" width="22.0" height="38.6" rx="4" style="transform-origin:top;transition-delay:448ms" data-tip="2026-05 — потери -124 тыс ₽"/>
+<rect class="bar-neg hit col-grow" x="662.6" y="140.0" width="22.0" height="38.6" rx="4" style="transform-origin:top;transition-delay:448ms" data-tip="2026-05 — потери −124 тыс ₽"/>
 <rect class="bar-pos hit col-grow" x="698.8" y="57.4" width="22.0" height="80.6" rx="4" style="transform-origin:bottom;transition-delay:476ms" data-tip="2026-06 — приход 260 тыс ₽"/>
-<rect class="bar-neg hit col-grow" x="698.8" y="140.0" width="22.0" height="27.2" rx="4" style="transform-origin:top;transition-delay:476ms" data-tip="2026-06 — потери -88 тыс ₽"/>
+<rect class="bar-neg hit col-grow" x="698.8" y="140.0" width="22.0" height="27.2" rx="4" style="transform-origin:top;transition-delay:476ms" data-tip="2026-06 — потери −88 тыс ₽"/>
 <rect class="bar-pos hit col-grow" x="734.9" y="32.6" width="22.0" height="105.4" rx="4" style="transform-origin:bottom;transition-delay:504ms" data-tip="2026-07 — приход 340 тыс ₽"/>
-<rect class="bar-neg hit col-grow" x="734.9" y="140.0" width="22.0" height="38.9" rx="4" style="transform-origin:top;transition-delay:504ms" data-tip="2026-07 — потери -125 тыс ₽"/>
+<rect class="bar-neg hit col-grow" x="734.9" y="140.0" width="22.0" height="38.9" rx="4" style="transform-origin:top;transition-delay:504ms" data-tip="2026-07 — потери −125 тыс ₽"/>
 <text class="axis-label" x="745.9" y="282" text-anchor="middle">2026-07</text>
 <rect class="bar-pos hit col-grow" x="770.9" y="78.4" width="22.0" height="59.6" rx="4" style="transform-origin:bottom;transition-delay:532ms" data-tip="2026-08 — приход 192 тыс ₽"/>
-<rect class="bar-neg hit col-grow" x="770.9" y="140.0" width="22.0" height="40.2" rx="4" style="transform-origin:top;transition-delay:532ms" data-tip="2026-08 — потери -130 тыс ₽"/>
+<rect class="bar-neg hit col-grow" x="770.9" y="140.0" width="22.0" height="40.2" rx="4" style="transform-origin:top;transition-delay:532ms" data-tip="2026-08 — потери −130 тыс ₽"/>
 </svg></div>
   <figcaption><b>Вывод.</b> Синие столбцы почти не растут, красные растут заметно: приход перекрывает потери уже только в 2,09 раза против четырнадцати в начале периода. Компания всё ещё растёт, но запас прочности сокращается.</figcaption>
   <details><summary>Показать числами</summary><table><thead><tr><th>Месяц</th><th>Приход, ₽</th><th>Потери, ₽</th></tr></thead><tbody><tr><td>2025-01</td><td>39 262</td><td>-1 242</td></tr><tr><td>2025-02</td><td>83 488</td><td>-1 490</td></tr><tr><td>2025-03</td><td>105 857</td><td>-13 230</td></tr><tr><td>2025-04</td><td>146 800</td><td>-10 440</td></tr><tr><td>2025-05</td><td>132 488</td><td>-32 460</td></tr><tr><td>2025-06</td><td>153 497</td><td>-32 212</td></tr><tr><td>2025-07</td><td>159 880</td><td>-21 680</td></tr><tr><td>2025-08</td><td>142 947</td><td>-43 250</td></tr><tr><td>2025-09</td><td>188 160</td><td>-34 070</td></tr><tr><td>2025-10</td><td>242 390</td><td>-58 710</td></tr><tr><td>2025-11</td><td>257 000</td><td>-65 190</td></tr><tr><td>2025-12</td><td>279 297</td><td>-69 390</td></tr><tr><td>2026-01</td><td>203 507</td><td>-93 595</td></tr><tr><td>2026-02</td><td>215 807</td><td>-69 822</td></tr><tr><td>2026-03</td><td>312 493</td><td>-84 552</td></tr><tr><td>2026-04</td><td>268 963</td><td>-86 567</td></tr><tr><td>2026-05</td><td>257 037</td><td>-124 448</td></tr><tr><td>2026-06</td><td>259 912</td><td>-87 575</td></tr><tr><td>2026-07</td><td>339 835</td><td>-125 380</td></tr><tr><td>2026-08</td><td>192 120</td><td>-129 633</td></tr></tbody></table></details>
 </figure>
 
 <h2 class="section">Клиенты</h2>
-<figure class="reveal">
+<figure class="reveal" id="funnel">
   <h3>Путь от регистрации до оплаты</h3>
   <p class="sub">Каждая полоса — сколько человек дошли до этого шага. Серые числа слева показывают, сколько людей потерялось между шагами.</p>
   <div class="scroll" tabindex="0" role="group" aria-label="График, прокручивается по горизонтали"><svg viewBox="0 0 820 296" role="img" aria-label="Воронка от регистрации до оплаты" preserveAspectRatio="xMidYMid meet">
@@ -377,7 +399,7 @@ footer { color: var(--muted); font-size: 13px; margin-top: 34px; line-height: 1.
 </svg></div>
   <figcaption><b>Вывод.</b> Из 11 264 зарегистрировавшихся платят 2 206 — 19,6 %. Самая большая потеря — 3 188 человек на шаге «Создал проект»: люди подтвердили почту и не начали работать. Это единственное место, где имеет смысл что-то менять в первую очередь.</figcaption>
   <details><summary>Показать числами</summary><table><thead><tr><th>Шаг</th><th>Человек</th><th>От старта</th></tr></thead><tbody><tr><td>Регистрация</td><td>11 264</td><td>100,0 %</td></tr><tr><td>Подтвердил почту</td><td>9 870</td><td>87,6 %</td></tr><tr><td>Создал проект</td><td>6 682</td><td>59,3 %</td></tr><tr><td>Активация</td><td>4 536</td><td>40,3 %</td></tr><tr><td>Оплатил</td><td>2 206</td><td>19,6 %</td></tr></tbody></table></details>
-</figure><figure class="reveal">
+</figure><figure class="reveal" id="retention">
   <h3>Сколько людей продолжают пользоваться</h3>
   <p class="sub">Доля тех, кто на очередной неделе после регистрации создавал или закрывал задачи. Просто вход в систему не считается: заглянуть и уйти — не работа. Синяя линия — те, кто освоился в первую неделю, оранжевая — все остальные.</p>
   <div class="scroll" tabindex="0" role="group" aria-label="График, прокручивается по горизонтали"><svg viewBox="0 0 820 300" role="img" aria-label="Удержание: активированные против остальных" preserveAspectRatio="xMidYMid meet">
@@ -424,7 +446,7 @@ footer { color: var(--muted); font-size: 13px; margin-top: 34px; line-height: 1.
 </figure>
 
 <h2 class="section">Кто может уйти</h2>
-<figure class="reveal">
+<figure class="reveal" id="risk">
   <h3>Кто может уйти в ближайший месяц</h3>
   <p class="sub">У тех, кто собирается уйти, активность падает задолго до отмены. Здесь действующие подписки разложены по тому, как изменилась их работа в продукте за последний месяц по сравнению с предыдущим. Длина полосы — деньги, а не число клиентов: уход крупного клиента стоит дороже.</p>
   <div class="scroll" tabindex="0" role="group" aria-label="График, прокручивается по горизонтали"><svg viewBox="0 0 820 172" role="img" aria-label="Подписки в зоне риска по сумме MRR" preserveAspectRatio="xMidYMid meet">
@@ -438,7 +460,7 @@ footer { color: var(--muted); font-size: 13px; margin-top: 34px; line-height: 1.
 <rect class="bar-good hit bar-grow" x="232" y="113" width="378.0" height="42" rx="4" style="transition-delay:220ms" data-tip="Работают как обычно: 1 183 подписок, 2,07 млн ₽ в месяц"/>
 <text class="value-label" x="622.0" y="139">▲ 2,07 млн ₽ · 1 183 подписок</text>
 </svg></div>
-  <figcaption><b>Вывод.</b> Под риском 314 тыс ₽ в месяц — это 192 подписок. Начинать стоит с замолчавших: 22 аккаунтов — объём, который поддержка отработает за день. Оговорка: правило проверено на прошлых уходах, а не на будущих. Прежде чем считать его рабочим, надо зафиксировать порог и посмотреть через месяц, сколько отмеченных ушло.</figcaption>
+  <figcaption><b>Вывод.</b> Под риском 314 тыс ₽ в месяц — это 192 подписки. Начинать стоит с замолчавших: 22 аккаунта — объём, который поддержка отработает за день. Оговорка: правило проверено на прошлых уходах, а не на будущих. Прежде чем считать его рабочим, надо зафиксировать порог и посмотреть через месяц, сколько отмеченных ушло.</figcaption>
   <details><summary>Показать числами</summary><table><thead><tr><th>Группа</th><th>Подписок</th><th>MRR, ₽</th><th>Доля MRR, %</th></tr></thead><tbody><tr><td>Замолчали совсем</td><td>22</td><td>35 097</td><td>1.5</td></tr><tr><td>Активность упала вдвое</td><td>170</td><td>278 707</td><td>11.7</td></tr><tr><td>Работают как обычно</td><td>1 183</td><td>2 066 284</td><td>86.8</td></tr></tbody></table></details>
 </figure>
 
@@ -462,7 +484,7 @@ footer { color: var(--muted); font-size: 13px; margin-top: 34px; line-height: 1.
 </svg></div>
   <figcaption><b>Вывод.</b> У 23.4 % регистраций источник определить не удалось. Этих людей нельзя ни выбросить из отчёта — тогда доли каналов окажутся посчитаны не от всех, — ни записать в «прямые заходы»: прямой канал раздуется на пустом месте. Поэтому они идут отдельной строкой, а стоимость привлечения ниже считается вилкой, а не одним числом.</figcaption>
   <details><summary>Показать числами</summary><table><thead><tr><th>Качество</th><th>Регистраций</th><th>Доля, %</th></tr></thead><tbody><tr><td>несколько касаний</td><td>4 784</td><td>39.9</td></tr><tr><td>одно касание</td><td>4 226</td><td>35.2</td></tr><tr><td>не определён</td><td>2 810</td><td>23.4</td></tr><tr><td>только прямые заходы</td><td>179</td><td>1.5</td></tr></tbody></table></details>
-</figure><figure class="reveal">
+</figure><figure class="reveal" id="channels">
   <h3>Окупается ли реклама</h3>
   <p class="sub">Во сколько раз клиент приносит больше, чем стоило его привлечение. Пунктир — граница безубыточности: левее неё канал не вернёт вложенного.</p>
   <div class="scroll" tabindex="0" role="group" aria-label="График, прокручивается по горизонтали"><svg viewBox="0 0 820 188" role="img" aria-label="Окупаемость каналов: отношение LTV к CAC" preserveAspectRatio="xMidYMid meet">
@@ -513,7 +535,7 @@ footer { color: var(--muted); font-size: 13px; margin-top: 34px; line-height: 1.
 
 <footer>
   Данные синтетические, сгенерированы <code>etl/generate_data.py</code>: это учебный кейс,
-  а не отчёт настоящей компании. Собрано 13.09.2026 00:09.
+  а не отчёт настоящей компании. Собрано 13.09.2026 00:12.
   Графики нарисованы инлайновым SVG, без внешних библиотек.
 </footer>
 </div>
