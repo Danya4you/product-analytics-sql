@@ -27,6 +27,13 @@ import tempfile
 import sys
 from datetime import datetime
 
+# Ссылки на документацию ведут в репозиторий, а не на соседний файл.
+# Относительный путь вида ../docs/findings.md работает только когда страницу
+# открыли из клона: на GitHub Pages тот же путь отдаётся как text/markdown, и
+# читатель видит сырой текст с решётками вместо статьи.
+REPO_URL = "https://github.com/Danya4you/product-analytics-sql"
+DOCS_URL = REPO_URL + "/blob/main/docs"
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "report", "dashboard.html")
 
@@ -1224,7 +1231,7 @@ def build(psql: str) -> str:
             " Но «не случайна» не значит «велика»: у первого теста эффект оказался на "
             "границе того, что он вообще способен различить, и обещать такой же прирост "
             'после раскатки нельзя. Разбор с оценкой чувствительности — в '
-            '<a href="../docs/findings.md">выводах</a>.',
+            f'<a href="{DOCS_URL}/findings.md">выводах</a>.',
             table(["Эксперимент", "Участников", "Контроль, %", "Тест, %", "Разница, п.п."],
                   [(r["experiment"], spaced(r["participants"]), r["control_pct"],
                     r["treatment_pct"], r["diff"]) for r in ab]),
@@ -1323,7 +1330,7 @@ def build(psql: str) -> str:
   <p class="lead">Отчёт о том, откуда приходят клиенты, сколько из них начинают платить,
      надолго ли остаются и окупается ли реклама. Данные за 20 месяцев, на 1 сентября 2026 года.</p>
   <p class="meta">Собрано из базы скриптом <code>scripts/build_dashboard.py</code> — числа
-     не правились руками. Подробный разбор с оговорками — в <a href="../docs/findings.md">выводах</a>.</p>
+     не правились руками. Подробный разбор с оговорками — в <a href="{DOCS_URL}/findings.md">выводах</a>.</p>
   <div class="howto">
     <b>Как читать.</b> Слова, подчёркнутые пунктиром, — термины: наведите курсор или
     коснитесь, появится объяснение простыми словами. То же с любым столбцом и точкой на
@@ -1361,6 +1368,7 @@ def build(psql: str) -> str:
   Данные синтетические, сгенерированы <code>etl/generate_data.py</code>: это учебный кейс,
   а не отчёт настоящей компании. Собрано {built}.
   Графики нарисованы инлайновым SVG, без внешних библиотек.
+  <br><a href="{REPO_URL}">Исходный код, SQL и документация на GitHub</a>.
 </footer>
 </div>
 
